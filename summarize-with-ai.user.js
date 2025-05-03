@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.05.03.1759
-// @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Long press 'S' to select model. Allows adding custom models. Adapts summary overlay to system dark mode.
+// @version      2025.05.03.2014
+// @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Long press 'S' to select model. Allows adding custom models. Adapts summary overlay to system dark mode and mobile viewports.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
 // @match        *://*/*
@@ -923,7 +923,7 @@ Article Content: ${content}`
 	 * Injeta os estilos CSS necessários para a interface do script.
 	 */
 	function injectStyles() {
-		// Estilos CSS com adições para cores de qualidade e dark mode
+		// Estilos CSS com adições para cores de qualidade, dark mode e responsividade móvel
 		GM.addStyle(`
       /* --- Elementos Principais da UI --- */
       #${BUTTON_ID} {
@@ -970,6 +970,7 @@ Article Content: ${content}`
         position: relative; font-size: 16px; line-height: 1.6;
         animation: slideInUp 0.3s ease-out; /* Animação */
         white-space: normal; /* Permite quebra de linha HTML */
+        box-sizing: border-box; /* Garante que padding não aumente o tamanho total */
       }
       #${CONTENT_ID} p { margin-top: 0; margin-bottom: 1em; } /* Margem padrão para parágrafos */
       #${CONTENT_ID} ul { margin: 1em 0; padding-left: 1.5em; } /* Adiciona padding para bullet points */
@@ -1136,6 +1137,34 @@ Article Content: ${content}`
         /* As cores atuais do glow parecem funcionar bem, mas podem ser ajustadas aqui */
         /* @keyframes glow-dark { ... } */
         /* .glow { animation-name: glow-dark; } */
+      }
+
+      /* --- Mobile Responsiveness --- */
+      /* Ajustes para telas pequenas (e.g., smartphones) */
+      @media (max-width: 600px) {
+         /* Faz o conteúdo do overlay ocupar a tela inteira */
+         #${CONTENT_ID} {
+            width: 100%;        /* Largura total */
+            height: 100%;       /* Altura total */
+            max-width: none;    /* Remove limite de largura máxima */
+            max-height: none;   /* Remove limite de altura máxima */
+            border-radius: 0;   /* Remove cantos arredondados (edge-to-edge) */
+            padding: 15px;      /* Reduz padding interno */
+            box-shadow: none;   /* Remove sombra (opcional) */
+            /* A animação pode ser desabilitada em mobile se preferir */
+            /* animation: none; */
+         }
+         /* Ajusta posição do botão de fechar para o novo padding */
+         #${CLOSE_BUTTON_ID} {
+            top: 10px;
+            right: 10px;
+         }
+         /* Esconde o botão flutuante 'S' e o dropdown quando o overlay estiver aberto */
+         /* (Embora o overlay já esteja acima, garante que não apareçam por baixo) */
+         #${OVERLAY_ID} ~ #${BUTTON_ID},
+         #${OVERLAY_ID} ~ #${DROPDOWN_ID} {
+            display: none !important;
+         }
       }
     `)
 	}
