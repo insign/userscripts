@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.05.03.1751
+// @version      2025.05.03.1759
 // @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Long press 'S' to select model. Allows adding custom models. Adapts summary overlay to system dark mode.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -12,8 +12,8 @@
 // @grant        GM.getValue
 // @connect      api.openai.com
 // @connect      generativelanguage.googleapis.com
-// @require      https://cdnjs.cloudflare.com/ajax/libs/readability/0.5.0/Readability.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/readability/0.5.0/Readability-readerable.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/readability/0.6.0/Readability.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/readability/0.6.0/Readability-readerable.min.js
 // @downloadURL  https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI.user.js
 // @updateURL    https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI.meta.js
 // ==/UserScript==
