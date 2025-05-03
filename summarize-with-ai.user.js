@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.05.02.2253
-// @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Allows adding custom models. Adapts summary overlay to system dark mode.
+// @version      2025.05.03.1751
+// @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Long press 'S' to select model. Allows adding custom models. Adapts summary overlay to system dark mode.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
 // @match        *://*/*
@@ -30,7 +30,7 @@
 	const CONTENT_ID        = 'summarize-content'      // Div que contém o texto do sumário
 	const ERROR_ID          = 'summarize-error'        // Div para exibir notificações de erro
 	const ADD_MODEL_ITEM_ID = 'add-custom-model'       // ID para o item "Adicionar Modelo" no dropdown
-	const RETRY_BUTTON_ID     = 'summarize-retry-button' // ID para o botão "Tentar Novamente" no overlay de erro
+	const RETRY_BUTTON_ID = 'summarize-retry-button' // ID para o botão "Tentar Novamente" no overlay de erro
 
 	// Chave para armazenar modelos customizados no GM storage
 	const CUSTOM_MODELS_KEY = 'custom_ai_models'
@@ -150,7 +150,7 @@ Article Content: ${content}`
 
 	/**
 	 * Adiciona o botão flutuante 'S' e o dropdown de seleção de modelo ao DOM.
-	 * Configura os event listeners do botão (click, dblclick, long press) e injeta estilos.
+	 * Configura os event listeners do botão (click, long press) e injeta estilos.
 	 */
 	function addSummarizeButton() {
 		// Evita adicionar o botão múltiplas vezes
@@ -160,7 +160,7 @@ Article Content: ${content}`
 		const button       = document.createElement('div')
 		button.id          = BUTTON_ID
 		button.textContent = 'S' // Texto simples e pequeno
-		button.title       = 'Summarize (Alt+S) / Dbl-Click or Long Press to Select Model' // Tooltip atualizado
+		button.title = 'Summarize (Alt+S) / Long Press to Select Model' // Tooltip atualizado (sem dblclick)
 		document.body.appendChild(button)
 
 		// Cria o dropdown (inicialmente oculto)
@@ -178,10 +178,7 @@ Article Content: ${content}`
 			isLongPress = false
 		})
 
-		// Listener para duplo clique: Mostra/esconde o dropdown
-		button.addEventListener('dblclick', toggleDropdown)
-
-		// Listeners para Long Press: Mostra/esconde o dropdown
+		// Listener para Long Press: Mostra/esconde o dropdown
 		button.addEventListener('mousedown', (e) => {
 			// Inicia o timer para detectar long press
 			isLongPress = false // Reseta a flag
@@ -192,13 +189,13 @@ Article Content: ${content}`
 			}, LONG_PRESS_DURATION)
 		})
 
+		// Listener para soltar o botão (cancela o timer se antes do tempo)
 		button.addEventListener('mouseup', () => {
-			// Cancela o timer se o botão for solto antes do tempo
 			clearTimeout(longPressTimer)
 		})
 
+		// Listener se o mouse sair do botão (cancela o timer)
 		button.addEventListener('mouseleave', () => {
-			// Cancela o timer se o mouse sair do botão
 			clearTimeout(longPressTimer)
 		})
 
@@ -345,7 +342,7 @@ Article Content: ${content}`
 
 	/**
 	 * Mostra ou esconde o dropdown de seleção de modelo.
-	 * @param {Event} [e] - O objeto do evento de clique (opcional).
+	 * @param {Event} [e] - O objeto do evento de clique/mousedown (opcional, para stopPropagation).
 	 */
 	function toggleDropdown(e) {
 		if (e) e.stopPropagation() // Impede que o clique feche imediatamente o dropdown
@@ -539,7 +536,7 @@ Article Content: ${content}`
 			const apiKey = await getApiKey(service) // Obtém a API key (pede ao usuário se não tiver)
 			if (!apiKey) { // Aborta se não houver API key
 				// Mostra erro no overlay se estiver aberto, senão como notificação
-				const errorMsg = `API key for ${service.toUpperCase()} is required. Click the 'Reset Key' link in the model selection menu (double-click or long-press 'S' button).`
+				const errorMsg = `API key for ${service.toUpperCase()} is required. Click the 'Reset Key' link in the model selection menu (long-press 'S' button).`
 				if (document.getElementById(OVERLAY_ID)) {
 					// Mostra o erro no overlay existente, sem botão de retry para este caso
 					updateSummaryOverlay(`<p style="color: red;">${errorMsg}</p>`, false)
@@ -778,13 +775,13 @@ Article Content: ${content}`
 				alert(`${service.toUpperCase()} API key updated!`)
 			} else {
 				alert(`${service.toUpperCase()} API key cleared!`)
-		}
+			}
 			// Opcional: Repopular dropdown para refletir alguma mudança visual se necessário
 			// const dropdown = document.getElementById(DROPDOWN_ID)
 			// if (dropdown && dropdown.style.display !== 'none') {
 			//     populateDropdown(dropdown)
 			// }
-	}
+		}
 		// Se newKey for null (usuário clicou Cancelar), não faz nada.
 	}
 
