@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.02.05.1805 // Refatoração MODEL_GROUPS, params por modelo, correção Gemini
-// @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Allows adding custom models.
+// @version      2025.05.02.2253
+// @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Allows adding custom models. Adapts summary overlay to system dark mode.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
 // @match        *://*/*
@@ -14,8 +14,8 @@
 // @connect      generativelanguage.googleapis.com
 // @require      https://cdnjs.cloudflare.com/ajax/libs/readability/0.5.0/Readability.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/readability/0.5.0/Readability-readerable.min.js
-// @downloadURL  https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI%20%28Unified%29.user.js
-// @updateURL    https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI%20%28Unified%29.meta.js
+// @downloadURL  https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI.user.js
+// @updateURL    https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI.meta.js
 // ==/UserScript==
 
 (function () {
@@ -30,6 +30,7 @@
 	const CONTENT_ID        = 'summarize-content'      // Div que contém o texto do sumário
 	const ERROR_ID          = 'summarize-error'        // Div para exibir notificações de erro
 	const ADD_MODEL_ITEM_ID = 'add-custom-model'       // ID para o item "Adicionar Modelo" no dropdown
+	const RETRY_BUTTON_ID     = 'summarize-retry-button' // ID para o botão "Tentar Novamente" no overlay de erro
 
 	// Chave para armazenar modelos customizados no GM storage
 	const CUSTOM_MODELS_KEY = 'custom_ai_models'
@@ -38,6 +39,8 @@
 	const DEFAULT_MAX_TOKENS = 1000
 	// Limite de tokens alto (para modelos específicos)
 	const HIGH_MAX_TOKENS    = 1500
+	// Tempo para considerar long press (em milissegundos)
+	const LONG_PRESS_DURATION = 500
 
 	// Configuração dos serviços e modelos de IA *padrão* suportados
 	// Nova estrutura: models é um array de objetos com id, name (opcional), params (opcional)
@@ -71,24 +74,35 @@
 	}
 
 	// Template do prompt enviado para a IA
-	const PROMPT_TEMPLATE = (title, content, lang) => `You are a helpful assistant that provides clear and affirmative explanations of content.
-Generate a concise summary that includes:
-- 2-sentence introduction
+	// Instruções atualizadas para usar as classes CSS específicas de qualidade
+	const PROMPT_TEMPLATE = (title, content, lang) => `You are a summarizer bot that provides clear and affirmative explanations of content.
+		Generate a concise summary that includes:
+		- 2-sentence introduction
 - Relevant emojis as bullet points
 - No section headers
 - Use HTML formatting, never use \`\`\` code blocks, never use markdown.
-- After the last bullet point add a 2-sentence conclusion with your own opinion based on your general knowledge, including if you agree or disagree and why. Give your opinion as a human.
-- Language: ${lang}
+- After the last bullet point add a 2-sentence conclusion with your own opinion based on your general knowledge, including if you agree or disagree and why. Give your opinion as a human. Start this conclusion with "<strong>Opinion:</strong> ". Do not add things like "I agree" or "I disagree", instead just your opinion.
+- User language to be used in the entire summary: ${lang}
+- Before everything, add quality of the article, like "<strong>Article Quality:</strong> <span class=article-good>8/10</span>", where 1 is bad and 10 is excellent.
+- For the quality class use:
+	<span class=article-excellent>9/10</span> (or 10)
+	<span class=article-good>8/10</span>
+	<span class=article-average>7/10</span>
+	<span class=article-bad>6/10</span>
+	<span class=article-very-bad>5/10</span> (or less)
+- "Opinion:", "Article Quality:" should be in user language, e.g. "Opinião:", "Qualidade do artigo:" for Português.
 
 Article Title: ${title}
 Article Content: ${content}`
 
-	// --- Variáveis de Estado ---
-	let activeModel  = 'gemini-2.5-flash-preview-04-17' // ID do modelo ativo selecionado por padrão ou pelo usuário
-	let articleData  = null                             // Armazena o título e conteúdo extraído do artigo { title, content }
-	let customModels = []                              // Array para armazenar modelos customizados carregados do storage { id, service }
+// --- Variáveis de Estado ---
+	let activeModel    = 'gemini-2.5-flash-preview-04-17' // ID do modelo ativo selecionado por padrão ou pelo usuário
+	let articleData    = null                             // Armazena o título e conteúdo extraído do artigo { title, content }
+	let customModels   = []                              // Array para armazenar modelos customizados carregados do storage { id, service }
+	let longPressTimer = null                             // Timer para detectar long press no botão 'S'
+	let isLongPress    = false                            // Flag para indicar se ocorreu long press
 
-	// --- Funções Principais ---
+// --- Funções Principais ---
 
 	/**
 	 * Função principal de inicialização do script.
@@ -122,7 +136,7 @@ Article Content: ${content}`
 				console.log('Summarize with AI: Page not detected as readerable.')
 				return null
 			}
-			const reader = new Readability(docClone)
+			const reader  = new Readability(docClone)
 			const article = reader.parse()
 			// Retorna dados se o conteúdo foi extraído e não está vazio
 			return (article?.content && article.textContent?.trim())
@@ -136,7 +150,7 @@ Article Content: ${content}`
 
 	/**
 	 * Adiciona o botão flutuante 'S' e o dropdown de seleção de modelo ao DOM.
-	 * Configura os event listeners do botão e injeta estilos.
+	 * Configura os event listeners do botão (click, dblclick, long press) e injeta estilos.
 	 */
 	function addSummarizeButton() {
 		// Evita adicionar o botão múltiplas vezes
@@ -146,7 +160,7 @@ Article Content: ${content}`
 		const button       = document.createElement('div')
 		button.id          = BUTTON_ID
 		button.textContent = 'S' // Texto simples e pequeno
-		button.title       = 'Summarize (Alt+S) / Dbl-Click to Reset API Key' // Tooltip
+		button.title       = 'Summarize (Alt+S) / Dbl-Click or Long Press to Select Model' // Tooltip atualizado
 		document.body.appendChild(button)
 
 		// Cria o dropdown (inicialmente oculto)
@@ -154,10 +168,40 @@ Article Content: ${content}`
 		document.body.appendChild(dropdown)
 		populateDropdown(dropdown) // Preenche o dropdown com modelos
 
-		// Listener para clique simples: mostra/esconde o dropdown
-		button.addEventListener('click', toggleDropdown)
-		// Listener para duplo clique: permite resetar a chave da API
-		button.addEventListener('dblclick', handleApiKeyReset)
+		// Listener para clique simples: Inicia a sumarização com o modelo ativo
+		button.addEventListener('click', () => {
+			// Só executa se não foi um long press
+			if (!isLongPress) {
+				processSummarization() // Chama a função principal de sumarização
+			}
+			// Reseta a flag de long press para o próximo clique
+			isLongPress = false
+		})
+
+		// Listener para duplo clique: Mostra/esconde o dropdown
+		button.addEventListener('dblclick', toggleDropdown)
+
+		// Listeners para Long Press: Mostra/esconde o dropdown
+		button.addEventListener('mousedown', (e) => {
+			// Inicia o timer para detectar long press
+			isLongPress = false // Reseta a flag
+			clearTimeout(longPressTimer) // Limpa timer anterior se houver
+			longPressTimer = setTimeout(() => {
+				isLongPress = true // Marca que ocorreu long press
+				toggleDropdown(e) // Abre/fecha o dropdown
+			}, LONG_PRESS_DURATION)
+		})
+
+		button.addEventListener('mouseup', () => {
+			// Cancela o timer se o botão for solto antes do tempo
+			clearTimeout(longPressTimer)
+		})
+
+		button.addEventListener('mouseleave', () => {
+			// Cancela o timer se o mouse sair do botão
+			clearTimeout(longPressTimer)
+		})
+
 		// Listener para clique fora do dropdown para fechá-lo
 		document.addEventListener('click', handleOutsideClick)
 
@@ -165,7 +209,8 @@ Article Content: ${content}`
 		injectStyles()
 	}
 
-	// --- Funções de UI (Dropdown, Overlay, Notificações) ---
+
+// --- Funções de UI (Dropdown, Overlay, Notificações) ---
 
 	/**
 	 * Cria o elemento base (container) do dropdown.
@@ -180,7 +225,7 @@ Article Content: ${content}`
 
 	/**
 	 * Preenche o elemento dropdown com os grupos de modelos (padrão e customizados)
-	 * e a opção para adicionar novos modelos. Usa a nova estrutura de MODEL_GROUPS.
+	 * e a opção para adicionar novos modelos. Adiciona links de reset de API Key.
 	 * @param {HTMLElement} dropdownElement - O elemento do dropdown a ser preenchido.
 	 */
 	function populateDropdown(dropdownElement) {
@@ -206,7 +251,8 @@ Article Content: ${content}`
 			if (allModelObjects.length > 0) {
 				const groupDiv     = document.createElement('div')
 				groupDiv.className = 'model-group'
-				groupDiv.appendChild(createHeader(group.name)) // Adiciona cabeçalho do grupo
+				// Cria o cabeçalho com link de reset
+				groupDiv.appendChild(createHeader(group.name, service))
 				// Adiciona cada item de modelo
 				allModelObjects.forEach(modelObj => groupDiv.appendChild(createModelItem(modelObj)))
 				dropdownElement.appendChild(groupDiv)
@@ -222,17 +268,35 @@ Article Content: ${content}`
 		dropdownElement.appendChild(createAddModelItem())
 	}
 
-
 	/**
-	 * Cria um elemento de cabeçalho para um grupo de modelos no dropdown.
+	 * Cria um elemento de cabeçalho para um grupo de modelos no dropdown,
+	 * incluindo um link para resetar a API Key do serviço.
 	 * @param {string} text - O texto do cabeçalho (nome do serviço).
+	 * @param {string} service - A chave do serviço ('openai' ou 'gemini').
 	 * @returns {HTMLElement} - O elemento div do cabeçalho.
 	 */
-	function createHeader(text) {
-		const header       = document.createElement('div')
-		header.className   = 'group-header'
-		header.textContent = text
-		return header
+	function createHeader(text, service) {
+		const headerContainer     = document.createElement('div')
+		headerContainer.className = 'group-header-container' // Container para flex layout
+
+		const headerText       = document.createElement('span') // Span para o texto
+		headerText.className   = 'group-header-text'
+		headerText.textContent = text
+
+		const resetLink       = document.createElement('a') // Link para resetar
+		resetLink.href        = '#'
+		resetLink.textContent = 'Reset Key'
+		resetLink.className   = 'reset-key-link'
+		resetLink.title       = `Reset ${text} API Key`
+		resetLink.addEventListener('click', (e) => {
+			e.preventDefault() // Previne navegação
+			e.stopPropagation() // Impede que feche o dropdown
+			handleApiKeyReset(service) // Chama o reset para o serviço específico
+		})
+
+		headerContainer.appendChild(headerText)
+		headerContainer.appendChild(resetLink)
+		return headerContainer
 	}
 
 	/**
@@ -271,7 +335,8 @@ Article Content: ${content}`
 		item.className   = 'model-item add-model-item' // Classe adicional para estilização
 		item.textContent = '+ Add Custom Model'
 		// Listener de clique: inicia o fluxo para adicionar um novo modelo
-		item.addEventListener('click', async () => {
+		item.addEventListener('click', async (e) => {
+			e.stopPropagation() // Impede que feche o dropdown
 			hideElement(DROPDOWN_ID) // Esconde o dropdown antes de mostrar os prompts
 			await handleAddModel()
 		})
@@ -288,7 +353,7 @@ Article Content: ${content}`
 		if (dropdown) {
 			const isHidden = dropdown.style.display === 'none'
 			if (isHidden) {
-				// Repopula o dropdown caso modelos tenham sido adicionados/removidos
+				// Repopula o dropdown caso modelos tenham sido adicionados/removidos ou para atualizar link de reset
 				populateDropdown(dropdown)
 				showElement(DROPDOWN_ID)
 			} else {
@@ -307,7 +372,7 @@ Article Content: ${content}`
 		// Verifica se o dropdown está visível e se o clique foi fora dele e fora do botão
 		if (dropdown && dropdown.style.display !== 'none' &&
 				!dropdown.contains(event.target) &&
-				!button.contains(event.target)) {
+				!button?.contains(event.target)) { // Verifica se o botão existe
 			hideElement(DROPDOWN_ID)
 		}
 	}
@@ -315,25 +380,28 @@ Article Content: ${content}`
 	/**
 	 * Exibe o overlay de sumarização com o conteúdo fornecido.
 	 * Cria o overlay se ele não existir.
-	 * @param {string} contentHTML - O conteúdo HTML a ser exibido (pode ser mensagem de loading ou o sumário).
+	 * Simplificado: O botão retry apenas chama processSummarization.
+	 * @param {string} contentHTML - O conteúdo HTML a ser exibido (pode ser loading, sumário ou erro com retry).
+	 * @param {boolean} [isError=false] - Indica se o conteúdo é uma mensagem de erro para adicionar botão de retry.
 	 */
-	function showSummaryOverlay(contentHTML) {
+	function showSummaryOverlay(contentHTML, isError = false) {
 		// Se o overlay já existe, apenas atualiza o conteúdo
 		if (document.getElementById(OVERLAY_ID)) {
-			updateSummaryOverlay(contentHTML)
+			updateSummaryOverlay(contentHTML, isError)
 			return
 		}
 
 		// Cria o elemento do overlay
-		const overlay     = document.createElement('div')
-		overlay.id        = OVERLAY_ID
+		const overlay    = document.createElement('div')
+		overlay.id       = OVERLAY_ID
 		// Define o HTML interno com container, botão de fechar e conteúdo inicial
-		overlay.innerHTML = `
-      <div id="${CONTENT_ID}">
-        <div id="${CLOSE_BUTTON_ID}" title="Close (Esc)">×</div>
-        ${contentHTML}
-      </div>
-    `
+		let finalContent = `<div id="${CLOSE_BUTTON_ID}" title="Close (Esc)">×</div>${contentHTML}`
+		// Adiciona botão de Tentar Novamente se for um erro
+		if (isError) {
+			finalContent += `<button id="${RETRY_BUTTON_ID}" class="retry-button">Try Again</button>`
+		}
+		overlay.innerHTML = `<div id="${CONTENT_ID}">${finalContent}</div>`
+
 		document.body.appendChild(overlay)
 		document.body.style.overflow = 'hidden' // Trava o scroll do body
 
@@ -342,7 +410,9 @@ Article Content: ${content}`
 		overlay.addEventListener('click', (e) => { // Fecha clicando no fundo (fora do content)
 			if (e.target === overlay) closeOverlay()
 		})
-		// Listener global de teclado para fechar com Esc já está em handleKeyPress
+		// Adiciona listener para o botão de Tentar Novamente, se existir
+		// Apenas chama processSummarization() novamente
+		document.getElementById(RETRY_BUTTON_ID)?.addEventListener('click', processSummarization)
 	}
 
 	/**
@@ -358,15 +428,25 @@ Article Content: ${content}`
 
 	/**
 	 * Atualiza o conteúdo dentro do overlay de sumarização já existente.
+	 * Simplificado: O botão retry apenas chama processSummarization.
 	 * @param {string} contentHTML - O novo conteúdo HTML.
+	 * @param {boolean} [isError=false] - Indica se o conteúdo é uma mensagem de erro para adicionar botão de retry.
 	 */
-	function updateSummaryOverlay(contentHTML) {
+	function updateSummaryOverlay(contentHTML, isError = false) {
 		const contentDiv = document.getElementById(CONTENT_ID)
 		if (contentDiv) {
 			// Recria o conteúdo interno, garantindo que o botão de fechar permaneça
-			contentDiv.innerHTML = `<div id="${CLOSE_BUTTON_ID}" title="Close (Esc)">×</div>${contentHTML}`
+			let finalContent = `<div id="${CLOSE_BUTTON_ID}" title="Close (Esc)">×</div>${contentHTML}`
+			// Adiciona botão de Tentar Novamente se for um erro
+			if (isError) {
+				finalContent += `<button id="${RETRY_BUTTON_ID}" class="retry-button">Try Again</button>`
+			}
+			contentDiv.innerHTML = finalContent
 			// Reatribui o listener ao novo botão de fechar
 			document.getElementById(CLOSE_BUTTON_ID)?.addEventListener('click', closeOverlay)
+			// Reatribui listener ao botão de Tentar Novamente, se existir
+			// Apenas chama processSummarization() novamente
+			document.getElementById(RETRY_BUTTON_ID)?.addEventListener('click', processSummarization)
 		}
 	}
 
@@ -407,7 +487,7 @@ Article Content: ${content}`
 		}
 	}
 
-	// --- Funções de Lógica (Sumarização, API, Modelos) ---
+// --- Funções de Lógica (Sumarização, API, Modelos) ---
 
 	/**
 	 * Encontra o objeto de configuração completo para o modelo ativo (padrão ou customizado).
@@ -418,36 +498,66 @@ Article Content: ${content}`
 			const group       = MODEL_GROUPS[service]
 			const modelConfig = group.models.find(m => m.id === activeModel)
 			if (modelConfig) {
-				return {...modelConfig, service: service} // Adiciona a chave do serviço
+				// Retorna uma cópia do objeto, adicionando a chave do serviço
+				return {...modelConfig, service: service}
 			}
 		}
 		// Verifica modelos customizados
 		const customConfig = customModels.find(m => m.id === activeModel)
 		if (customConfig) {
 			// Custom models não tem 'name' ou 'params' definidos por padrão aqui
-			return {...customConfig} // Retorna { id, service }
+			// Retorna uma cópia do objeto customizado { id, service }
+			return {...customConfig}
 		}
+		console.error(`Summarize with AI: Active model configuration not found for ID: ${activeModel}`)
 		return null // Modelo não encontrado
 	}
 
 	/**
-	 * Orquestra o processo de sumarização: obtém API key, mostra overlay de loading,
+	 * Orquestra o processo de sumarização: obtém API key, mostra overlay de loading com nome do modelo,
 	 * envia requisição à API e trata a resposta.
 	 */
 	async function processSummarization() {
 		try {
-			const modelConfig = getActiveModelConfig() // Obtém a configuração completa do modelo ativo
-			if (!modelConfig) throw new Error(`Configuration for model not found: ${activeModel}`)
-
-			const service = modelConfig.service // Determina 'openai' ou 'gemini' a partir da config
-
-			const apiKey = await getApiKey(service) // Obtém a API key (pede ao usuário se não tiver)
-			if (!apiKey) { // Aborta se não houver API key
-				showErrorNotification(`API key for ${service.toUpperCase()} is required. Double-click the 'S' button to set it.`)
+			// Garante que temos dados do artigo antes de prosseguir
+			if (!articleData) {
+				showErrorNotification('Article content not found or not readable.')
 				return
 			}
 
-			showSummaryOverlay('<p class="glow">Summarizing...</p>') // Mostra feedback de loading
+			const modelConfig = getActiveModelConfig() // Obtém a configuração completa do modelo ativo
+			if (!modelConfig) {
+				// Mensagem de erro mais informativa se o modelo não for encontrado
+				showErrorNotification(`Configuration for model "${activeModel}" not found. Please select another model.`)
+				return // Interrompe a execução se a configuração não for encontrada
+			}
+
+			// Determina o nome a ser exibido (usa 'name' se disponível, senão 'id')
+			const modelDisplayName = modelConfig.name || modelConfig.id
+			const service          = modelConfig.service // Determina 'openai' ou 'gemini' a partir da config
+
+			const apiKey = await getApiKey(service) // Obtém a API key (pede ao usuário se não tiver)
+			if (!apiKey) { // Aborta se não houver API key
+				// Mostra erro no overlay se estiver aberto, senão como notificação
+				const errorMsg = `API key for ${service.toUpperCase()} is required. Click the 'Reset Key' link in the model selection menu (double-click or long-press 'S' button).`
+				if (document.getElementById(OVERLAY_ID)) {
+					// Mostra o erro no overlay existente, sem botão de retry para este caso
+					updateSummaryOverlay(`<p style="color: red;">${errorMsg}</p>`, false)
+				} else {
+					// Se o overlay não estava aberto, mostra como notificação
+					showErrorNotification(errorMsg)
+				}
+				return // Interrompe se não houver chave
+			}
+
+			// Mostra feedback de loading com o nome do modelo
+			// Verifica se o overlay já existe (caso seja um retry)
+			const loadingMessage = `<p class="glow">Summarizing with ${modelDisplayName}... </p>`
+			if (document.getElementById(OVERLAY_ID)) {
+				updateSummaryOverlay(loadingMessage) // Atualiza overlay existente
+			} else {
+				showSummaryOverlay(loadingMessage) // Cria novo overlay
+			}
 
 			// Prepara os dados para a API
 			const payload = {title: articleData.title, content: articleData.content, lang: navigator.language || 'en-US'}
@@ -458,14 +568,11 @@ Article Content: ${content}`
 			handleApiResponse(response, service) // Processa a resposta
 
 		} catch (error) {
-			// Exibe erros no overlay ou como notificação
+			// Exibe erros no overlay com botão de Tentar Novamente
 			const errorMsg = `Error: ${error.message}`
 			console.error('Summarize with AI:', errorMsg, error) // Loga o erro completo
-			if (document.getElementById(OVERLAY_ID)) {
-				updateSummaryOverlay(`<p style="color: red;">${errorMsg}</p>`)
-			} else {
-				showErrorNotification(errorMsg)
-			}
+			// Mostra erro no overlay (ou cria um novo se não existir), com botão de retry
+			showSummaryOverlay(`<p style="color: red;">${errorMsg}</p>`, true)
 			hideElement(DROPDOWN_ID) // Garante que o dropdown esteja oculto em caso de erro
 		}
 	}
@@ -498,7 +605,8 @@ Article Content: ${content}`
 					const responseData = response.response || response.responseText
 					// Resolve com um objeto contendo status e dados parseados (ou texto original)
 					resolve({
-						status:     response.status,
+						status: response.status,
+						// Tenta parsear mesmo que responseType seja json, pois pode falhar
 						data:       typeof responseData === 'object' ? responseData : JSON.parse(responseData || '{}'),
 						statusText: response.statusText,
 					})
@@ -511,8 +619,7 @@ Article Content: ${content}`
 	}
 
 	/**
-	 * Processa a resposta da API, extrai o sumário e atualiza o overlay.
-	 * Adiciona log para o finish_reason e tratamento mais robusto para Gemini.
+	 * Processa a resposta da API, extrai o sumário, limpa quebras de linha extras e atualiza o overlay.
 	 * @param {object} response - O objeto de resposta resolvido da Promise de `sendApiRequest` (contém status, data).
 	 * @param {string} service - 'openai' ou 'gemini'.
 	 */
@@ -522,15 +629,15 @@ Article Content: ${content}`
 		// Verifica se o status HTTP indica sucesso (2xx)
 		if (status < 200 || status >= 300) {
 			// Tenta extrair uma mensagem de erro mais detalhada do corpo da resposta
-			const errorDetails = data?.error?.message || statusText || 'Unknown API error'
+			const errorDetails = data?.error?.message || data?.message || statusText || 'Unknown API error' // Gemini pode usar 'message' no erro
 			throw new Error(`API Error (${status}): ${errorDetails}`)
 		}
 
 		// Extrai o conteúdo do sumário dependendo do serviço
-		let summary = ''
+		let rawSummary = ''
 		if (service === 'openai') {
 			const choice = data?.choices?.[0]
-			summary      = choice?.message?.content
+			rawSummary   = choice?.message?.content
 
 			// Loga o motivo pelo qual a geração parou
 			const finishReason = choice?.finish_reason
@@ -554,22 +661,29 @@ Article Content: ${content}`
 
 			// Verificação robusta: garante que parts existe e tem conteúdo
 			if (candidate?.content?.parts?.length > 0 && candidate.content.parts[0].text) {
-				summary = candidate.content.parts[0].text
-			} else if (finishReason !== 'STOP' && finishReason !== 'SAFETY') {
-				// Se não parou normalmente ou por segurança, e não encontramos texto, loga aviso
+				rawSummary = candidate.content.parts[0].text
+			} else if (finishReason && !['STOP', 'SAFETY', 'MAX_TOKENS'].includes(finishReason)) {
+				// Loga aviso se motivo de finalização não for comum e não houver texto
+				console.warn(`Summarize with AI: Gemini response structure missing expected text content or unusual finish reason: ${finishReason}`, candidate)
+			} else if (!rawSummary && !data?.error) {
 				console.warn('Summarize with AI: Gemini response structure missing expected text content.', candidate)
 			}
-			// Se summary ainda estiver vazio aqui, o erro "did not contain valid summary" será lançado abaixo
+			// Se rawSummary ainda estiver vazio aqui, o erro "did not contain valid summary" será lançado abaixo
 		}
 
 		// Verifica se o sumário foi realmente obtido
-		if (!summary && !data?.error) { // Adicionada verificação !data?.error para não sobrescrever erros de API
-			console.warn('API Response Data:', data) // Loga a resposta para depuração
+		if (!rawSummary && !data?.error) { // Adicionada verificação !data?.error para não sobrescrever erros de API
+			console.error('Summarize with AI: API Response Data:', data) // Loga a resposta para depuração
 			throw new Error('API response did not contain a valid summary.')
 		}
 
-		// Atualiza o overlay com o sumário formatado
-		updateSummaryOverlay(summary)
+		// Limpa quebras de linha (\n) que não fazem parte de tags HTML (substitui por espaço)
+		// e comprime múltiplos espaços em um único espaço.
+		// Isso ajuda a evitar espaçamento duplo estranho se a API retornar \n desnecessários.
+		const cleanedSummary = rawSummary.replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim()
+
+		// Atualiza o overlay com o sumário limpo, sem botão de retry
+		updateSummaryOverlay(cleanedSummary, false)
 	}
 
 	/**
@@ -630,54 +744,48 @@ Article Content: ${content}`
 	}
 
 	/**
-	 * Determina qual serviço ('openai' ou 'gemini') corresponde ao `activeModel` (ID) atual.
-	 * Deprecado em favor de getActiveModelConfig() que retorna mais informações.
-	 * @returns {string|undefined} - O nome do serviço ou undefined se não encontrado.
-	 */
-	// function getCurrentService() {
-	//     const config = getActiveModelConfig()
-	//     return config?.service
-	// }
-
-	/**
 	 * Obtém a chave da API para o serviço especificado a partir do armazenamento (GM.getValue).
-	 * Se não existir, pede ao usuário via prompt e armazena (GM.setValue).
+	 * Se não existir, retorna null (a verificação e mensagem de erro ocorrem em processSummarization).
 	 * @param {string} service - 'openai' ou 'gemini'.
-	 * @returns {Promise<string|null>} - A chave da API ou null se não for fornecida.
+	 * @returns {Promise<string|null>} - A chave da API ou null se não for encontrada.
 	 */
 	async function getApiKey(service) {
 		const storageKey = `${service}_api_key`
 		let apiKey       = await GM.getValue(storageKey)
-
-		if (!apiKey) {
-			apiKey = prompt(`Enter your ${service.toUpperCase()} API key:`)
-			if (apiKey) {
-				apiKey = apiKey.trim()
-				await GM.setValue(storageKey, apiKey) // Salva a chave fornecida
-			} else {
-				return null // Usuário cancelou ou não inseriu
-			}
-		}
-		return apiKey?.trim() // Retorna a chave existente ou recém-inserida
+		// Retorna a chave encontrada ou null se não existir/vazia
+		return apiKey?.trim() || null
 	}
 
 	/**
-	 * Permite ao usuário resetar (redefinir) a chave da API via prompt.
-	 * Ativado por duplo clique no botão 'S'.
+	 * Permite ao usuário resetar (redefinir) a chave da API para um serviço específico via prompt.
+	 * Ativado pelo link 'Reset Key' no dropdown.
+	 * @param {string} service - O serviço ('openai' ou 'gemini') para o qual resetar a chave.
 	 */
-	async function handleApiKeyReset() {
-		const serviceInput = prompt('Reset API key for which service? (openai / gemini)')?.toLowerCase()?.trim()
-
-		if (serviceInput && MODEL_GROUPS[serviceInput]) {
-			const storageKey = `${serviceInput}_api_key`
-			const newKey     = prompt(`Enter the new ${serviceInput.toUpperCase()} API key (leave blank to clear):`)
-			if (newKey !== null) { // Verifica se o usuário não cancelou
-				await GM.setValue(storageKey, newKey.trim())
-				alert(`${serviceInput.toUpperCase()} API key updated!`)
-			}
-		} else if (serviceInput) {
-			alert('Invalid service name. Please enter "openai" or "gemini".')
+	async function handleApiKeyReset(service) {
+		if (!service || !MODEL_GROUPS[service]) {
+			console.error("Invalid service provided for API key reset:", service)
+			alert("Internal error: Invalid service provided.")
+			return
 		}
+
+		const storageKey = `${service}_api_key`
+		const newKey     = prompt(`Enter the new ${service.toUpperCase()} API key (leave blank to clear):`)
+
+		if (newKey !== null) { // Verifica se o usuário não cancelou (clicou em OK ou deixou em branco)
+			const keyToSave = newKey.trim()
+			await GM.setValue(storageKey, keyToSave)
+			if (keyToSave) {
+				alert(`${service.toUpperCase()} API key updated!`)
+			} else {
+				alert(`${service.toUpperCase()} API key cleared!`)
+		}
+			// Opcional: Repopular dropdown para refletir alguma mudança visual se necessário
+			// const dropdown = document.getElementById(DROPDOWN_ID)
+			// if (dropdown && dropdown.style.display !== 'none') {
+			//     populateDropdown(dropdown)
+			// }
+	}
+		// Se newKey for null (usuário clicou Cancelar), não faz nada.
 	}
 
 	/**
@@ -702,6 +810,7 @@ Article Content: ${content}`
 
 		// 3. Adiciona o modelo e salva
 		await addCustomModel(service, modelId)
+		// Opcional: reabrir dropdown após adicionar? Por ora, não.
 	}
 
 	/**
@@ -711,8 +820,10 @@ Article Content: ${content}`
 	 * @param {string} modelId - O ID exato do modelo.
 	 */
 	async function addCustomModel(service, modelId) {
-		// Verifica se o ID do modelo já existe para este serviço
-		const exists = customModels.some(m => m.service === service && m.id.toLowerCase() === modelId.toLowerCase())
+		// Verifica se o ID do modelo já existe para este serviço (case-insensitive)
+		const exists = customModels.some(m => m.service === service && m.id.toLowerCase() === modelId.toLowerCase()) ||
+				MODEL_GROUPS[service]?.models.some(m => m.id.toLowerCase() === modelId.toLowerCase()) // Verifica também nos padrões
+
 		if (exists) {
 			alert(`Model ID "${modelId}" already exists for ${service.toUpperCase()}.`)
 			return
@@ -750,21 +861,22 @@ Article Content: ${content}`
 		}
 	}
 
-	// --- Funções de Eventos e Utilidades ---
+// --- Funções de Eventos e Utilidades ---
 
 	/**
 	 * Manipulador para o atalho de teclado (Alt+S) e tecla Esc.
-	 * Alt+S: Simula clique no botão 'S' (abre/fecha dropdown).
+	 * Alt+S: Simula clique no botão 'S' (inicia sumarização).
 	 * Esc: Fecha o overlay ou o dropdown.
 	 * @param {KeyboardEvent} e - O objeto do evento de teclado.
 	 */
 	function handleKeyPress(e) {
-		// Atalho Alt+S para abrir/fechar dropdown
+		// Atalho Alt+S para iniciar sumarização (simula clique simples)
 		if (e.altKey && e.code === 'KeyS') {
 			e.preventDefault()
 			const button = document.getElementById(BUTTON_ID)
 			if (button) {
-				toggleDropdown() // Chama a função que alterna a visibilidade do dropdown
+				// Chama a função principal de sumarização
+				processSummarization()
 			}
 		}
 		// Tecla Esc para fechar overlay ou dropdown
@@ -814,8 +926,9 @@ Article Content: ${content}`
 	 * Injeta os estilos CSS necessários para a interface do script.
 	 */
 	function injectStyles() {
-		// Estilos CSS mantidos
+		// Estilos CSS com adições para cores de qualidade e dark mode
 		GM.addStyle(`
+      /* --- Elementos Principais da UI --- */
       #${BUTTON_ID} {
         position: fixed; bottom: 20px; right: 20px;
         width: 50px; height: 50px; /* Tamanho */
@@ -841,12 +954,72 @@ Article Content: ${content}`
         display: none; /* Começa oculto */
         animation: fadeIn 0.2s ease-out; /* Animação */
       }
-      .model-group { margin-bottom: 8px; }
-      .group-header {
-        padding: 8px 12px; font-weight: 600; color: #333; background: #f7f7f7;
-        border-radius: 6px; margin-bottom: 4px; font-size: 13px;
-        text-transform: uppercase; letter-spacing: 0.5px;
+      #${OVERLAY_ID} {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0, 0, 0, 0.6); /* Fundo semi-transparente (padrão light) */
+        z-index: 2147483645; /* Muito alto */
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden; /* Impede scroll do body */
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        animation: fadeIn 0.3s ease-out;
       }
+      #${CONTENT_ID} {
+        background-color: #fff; /* Fundo branco (padrão light) */
+        color: #333; /* Texto escuro (padrão light) */
+        padding: 25px 35px; border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        max-width: 800px; width: 90%; max-height: 85vh; /* Dimensões */
+        overflow-y: auto; /* Scroll interno */
+        position: relative; font-size: 16px; line-height: 1.6;
+        animation: slideInUp 0.3s ease-out; /* Animação */
+        white-space: normal; /* Permite quebra de linha HTML */
+      }
+      #${CONTENT_ID} p { margin-top: 0; margin-bottom: 1em; } /* Margem padrão para parágrafos */
+      #${CONTENT_ID} ul { margin: 1em 0; padding-left: 1.5em; } /* Adiciona padding para bullet points */
+      #${CONTENT_ID} li { list-style-type: none; margin-bottom: 0.5em; } /* Remove marcador padrão (usa emoji) */
+      #${CLOSE_BUTTON_ID} {
+        position: absolute; top: 10px; right: 15px;
+        font-size: 28px; color: #aaa; /* Cinza claro (padrão light) */
+        cursor: pointer;
+        transition: color 0.2s; line-height: 1; z-index: 1; /* Garante que fique acima do conteúdo */
+      }
+      #${CLOSE_BUTTON_ID}:hover { color: #333; } /* Mais escuro no hover (light) */
+      #${ERROR_ID} {
+        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); /* Centralizado */
+        background-color: #e53e3e; color: white; padding: 12px 20px;
+        border-radius: 6px; z-index: 2147483646; /* Acima de tudo */
+        font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        animation: fadeIn 0.3s, fadeOut 0.3s 3.7s forwards; /* Fade in e out */
+      }
+      .retry-button { /* Estilo para o botão Tentar Novamente */
+        display: block; margin: 20px auto 0; padding: 8px 16px;
+        background-color: #4a90e2; /* Azul (padrão light) */
+        color: white; border: none; border-radius: 5px;
+        cursor: pointer; font-size: 14px; transition: background-color 0.2s;
+      }
+      .retry-button:hover { background-color: #3a7bd5; } /* Azul mais escuro no hover (light) */
+
+      /* --- Estilos do Dropdown --- */
+      .model-group { margin-bottom: 8px; }
+      .group-header-container { /* Container para header e link reset */
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 12px; background: #f7f7f7;
+        border-radius: 6px; margin-bottom: 4px;
+      }
+      .group-header-text { /* Texto do header */
+        font-weight: 600; color: #333; font-size: 13px;
+        text-transform: uppercase; letter-spacing: 0.5px;
+        flex-grow: 1; /* Ocupa espaço disponível */
+      }
+      .reset-key-link { /* Link de reset */
+        font-size: 11px; color: #666; text-decoration: none;
+        margin-left: 10px; /* Espaçamento */
+        white-space: nowrap; /* Não quebrar linha */
+        cursor: pointer;
+        transition: color 0.2s;
+      }
+      .reset-key-link:hover { color: #1a73e8; }
       .model-item {
         padding: 10px 14px; margin: 2px 0; border-radius: 6px;
         transition: background-color 0.15s ease-out, color 0.15s ease-out;
@@ -859,52 +1032,40 @@ Article Content: ${content}`
          font-style: italic;
       }
       .add-model-item:hover { background-color: #f0f0f0; color: #333; }
-      #${OVERLAY_ID} {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background-color: rgba(0, 0, 0, 0.6); /* Fundo semi-transparente */
-        z-index: 2147483645; /* Muito alto */
-        display: flex; align-items: center; justify-content: center;
-        overflow: hidden; /* Impede scroll do body */
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        animation: fadeIn 0.3s ease-out;
-      }
-      #${CONTENT_ID} {
-        background-color: #fff; padding: 25px 35px; border-radius: 12px;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        max-width: 800px; width: 90%; max-height: 85vh; /* Dimensões */
-        overflow-y: auto; /* Scroll interno */
-        position: relative; font-size: 16px; line-height: 1.6; color: #333;
-        animation: slideInUp 0.3s ease-out; /* Animação */
-        white-space: pre-wrap; /* Preserva quebras de linha e espaços do sumário */
-      }
-      #${CONTENT_ID} ul { margin: 1em 0; padding-left: 0; } /* Ajuste para remover padding padrão */
-      #${CONTENT_ID} li { list-style-type: none; margin-bottom: 0.5em; } /* Remove bullet padrão e adiciona margem */
-       #${CONTENT_ID} p { margin-top: 0; margin-bottom: 1em; } /* Margem padrão para parágrafos */
-      #${CLOSE_BUTTON_ID} {
-        position: absolute; top: 10px; right: 15px;
-        font-size: 28px; color: #aaa; cursor: pointer;
-        transition: color 0.2s; line-height: 1;
-      }
-      #${CLOSE_BUTTON_ID}:hover { color: #333; }
-      #${ERROR_ID} {
-        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); /* Centralizado */
-        background-color: #e53e3e; color: white; padding: 12px 20px;
-        border-radius: 6px; z-index: 2147483646; /* Acima de tudo */
-        font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        animation: fadeIn 0.3s, fadeOut 0.3s 3.7s forwards; /* Fade in e out */
-      }
-      .glow { /* Estilo para "Summarizing..." */
-        font-size: 1.4em; color: #555; text-align: center; padding: 40px 0;
-        animation: glow 1.8s ease-in-out infinite alternate;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        font-weight: 300;
-      }
 
-      /* Animações */
+      /* --- Estilos de Conteúdo (Glow, Qualidade) --- */
+      .glow { /* Estilo para "Summarizing with [Model]..." / "Retrying with [Model]..." */
+        font-size: 1.4em; text-align: center; padding: 40px 0;
+        /* Aplica a animação 'glow' com ciclo infinito e duração de 2.5s */
+        animation: glow 2.5s ease-in-out infinite;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-weight: 400;
+      }
+      /* Cores para as classes de qualidade do artigo */
+      span.article-excellent { color: #2ecc71; font-weight: bold; } /* Verde brilhante */
+      span.article-good      { color: #3498db; font-weight: bold; } /* Azul */
+      span.article-average   { color: #f39c12; font-weight: bold; } /* Laranja */
+      span.article-bad       { color: #e74c3c; font-weight: bold; } /* Vermelho */
+      span.article-very-bad  { color: #c0392b; font-weight: bold; } /* Vermelho escuro */
+
+      /* --- Animações --- */
+      /* Define os keyframes para a animação 'glow' ciclando entre azul, roxo e vermelho */
       @keyframes glow {
-        from { color: #4a90e2; text-shadow: 0 0 8px rgba(74, 144, 226, 0.5); }
-        to { color: #7aa7d6; text-shadow: 0 0 15px rgba(122, 167, 214, 0.7); }
+        0%, 100% { /* Início e Fim: Azul */
+          color: #4a90e2;
+          text-shadow: 0 0 10px rgba(74, 144, 226, 0.6),
+                       0 0 20px rgba(74, 144, 226, 0.4);
+        }
+        33% { /* Ponto intermediário 1: Roxo */
+          color: #9b59b6; /* Tom de roxo */
+          text-shadow: 0 0 12px rgba(155, 89, 182, 0.7), /* Sombra roxa */
+                       0 0 25px rgba(155, 89, 182, 0.5);
+        }
+        66% { /* Ponto intermediário 2: Vermelho */
+          color: #e74c3c; /* Tom de vermelho */
+          text-shadow: 0 0 12px rgba(231, 76, 60, 0.7), /* Sombra vermelha */
+                       0 0 25px rgba(231, 76, 60, 0.5);
+        }
       }
       @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
       @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
@@ -912,10 +1073,77 @@ Article Content: ${content}`
          from { transform: translateY(30px); opacity: 0; }
          to { transform: translateY(0); opacity: 1; }
       }
+
+      /* --- Dark Mode Override (Adaptação automática ao tema escuro do sistema) --- */
+      @media (prefers-color-scheme: dark) {
+        /* Fundo do overlay mais escuro */
+        #${OVERLAY_ID} {
+          background-color: rgba(20, 20, 20, 0.7); /* Fundo mais opaco e escuro */
+        }
+        /* Conteúdo do sumário com fundo escuro e texto claro */
+        #${CONTENT_ID} {
+          background-color: #2c2c2c; /* Cinza bem escuro */
+          color: #e0e0e0; /* Texto cinza claro */
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); /* Sombra um pouco mais visível */
+        }
+        /* Botão de fechar com cores invertidas */
+        #${CLOSE_BUTTON_ID} {
+          color: #888; /* Cinza médio */
+        }
+        #${CLOSE_BUTTON_ID}:hover {
+          color: #eee; /* Quase branco no hover */
+        }
+        /* Botão Tentar Novamente com estilo adaptado */
+        .retry-button {
+          background-color: #555; /* Cinza médio */
+          color: #eee; /* Texto claro */
+        }
+        .retry-button:hover {
+          background-color: #666; /* Cinza um pouco mais claro no hover */
+        }
+        /* Dropdown também pode ter fundo escuro (opcional, mantendo legibilidade) */
+        #${DROPDOWN_ID} {
+           background: #333; /* Fundo escuro para dropdown */
+           border-color: #555; /* Borda mais escura */
+        }
+        .model-item {
+           color: #ccc; /* Texto do item mais claro */
+        }
+        .model-item:hover {
+           background-color: #444; /* Fundo de hover mais escuro */
+           color: #fff; /* Texto branco no hover */
+        }
+        .group-header-container {
+           background: #444; /* Fundo do cabeçalho do grupo */
+        }
+        .group-header-text {
+           color: #eee; /* Texto do cabeçalho claro */
+        }
+        .reset-key-link {
+           color: #aaa; /* Link de reset mais claro */
+        }
+        .reset-key-link:hover {
+           color: #fff; /* Link de reset branco no hover */
+        }
+        .add-model-item {
+           color: #999; /* Item de adicionar mais claro */
+        }
+        .add-model-item:hover {
+           background-color: #4a4a4a; /* Fundo de hover */
+           color: #eee; /* Texto claro no hover */
+        }
+        hr {
+           border-top-color: #555 !important; /* Separador mais escuro */
+        }
+        /* Ajuste de cor para o brilho no modo escuro se necessário (opcional) */
+        /* As cores atuais do glow parecem funcionar bem, mas podem ser ajustadas aqui */
+        /* @keyframes glow-dark { ... } */
+        /* .glow { animation-name: glow-dark; } */
+      }
     `)
 	}
 
-	// --- Inicialização ---
+// --- Inicialização ---
 	initialize() // Chama a função principal para iniciar o script
 
 })()

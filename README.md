@@ -28,9 +28,24 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
 
 ### Summarize with AI (OpenAI/Gemini)
 
-*   **Descrição:** Adiciona um botão discreto ('S') em páginas detectadas como artigos ou notícias. Ao clicar, permite escolher um modelo de IA (OpenAI ou Gemini) para gerar um resumo conciso do conteúdo. Pede a chave da API no primeiro uso de cada serviço. O resumo é exibido em um overlay na língua do navegador.
+* **Descrição:** Adiciona um botão discreto ('S') em páginas detectadas como artigos ou notícias. Ao clicar, utiliza o
+  último modelo de IA selecionado (OpenAI ou Gemini) para gerar um resumo conciso do conteúdo. Pede a chave da API no
+  primeiro uso de cada serviço ou se ela for apagada. O resumo é exibido em um overlay na língua do navegador. Permite
+  adicionar modelos customizados.
+* **Novidades:**
+    * A avaliação da qualidade do artigo no resumo agora é colorida para melhor visualização (excelente, bom, médio,
+      ruim, muito ruim).
+    * O overlay do resumo adapta automaticamente suas cores (fundo e texto) se o sistema operacional/navegador estiver
+      configurado no modo escuro (dark mode).
 *   **Instalar:** [Greasy Fork](https://greasyfork.org/en/scripts/509192-summarize-with-ai)
-*   **Uso:** Clique no botão 'S' no canto inferior direito e selecione o modelo. Atalho: `Alt+S`. Duplo clique no botão permite redefinir a chave da API.
+* **Uso:**
+    * **Clique simples** no botão 'S' no canto inferior direito: Inicia a sumarização com o último modelo usado.
+    * **Duplo clique** ou **Long Press** (segurar por 0.5s) no botão 'S': Abre o menu para selecionar um modelo
+      diferente.
+    * **Atalho `Alt+S`**: Inicia a sumarização com o último modelo usado (equivalente ao clique simples).
+    * **Resetar API Key**: Dentro do menu de seleção de modelos, clique no link "Reset Key" ao lado do nome do serviço (
+      OpenAI/Gemini).
+    * **Erro na Sumarização**: Se ocorrer um erro durante a sumarização, um botão "Try Again" aparecerá no overlay.
 *   **Dependências:** Requer chaves de API válidas para OpenAI e/ou Google Gemini (AI Studio).
 
 ### Better LMArena (lmsys) Chat
