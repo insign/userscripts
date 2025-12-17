@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.07.07.1156
-// @description  Single-button AI summarization (OpenAI/Gemini) with model selection dropdown for articles/news. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Allows adding custom models. Adapts summary overlay to system dark mode and mobile viewports.
+// @version      2025.07.17.1200
+// @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
 // @match        *://*/*
@@ -23,14 +23,19 @@
 
   // --- Constants ---
   // UI Element IDs
-  const BUTTON_ID         = 'summarize-button'
-  const DROPDOWN_ID       = 'model-dropdown'
-  const OVERLAY_ID        = 'summarize-overlay'
-  const CLOSE_BUTTON_ID   = 'summarize-close'
-  const CONTENT_ID        = 'summarize-content'
-  const ERROR_ID          = 'summarize-error'
-  const ADD_MODEL_ITEM_ID = 'add-custom-model'
-  const RETRY_BUTTON_ID   = 'summarize-retry-button'
+  const BUTTON_ID            = 'summarize-button'
+  const DROPDOWN_ID          = 'model-dropdown'
+  const OVERLAY_ID           = 'summarize-overlay'
+  const CLOSE_BUTTON_ID      = 'summarize-close'
+  const CONTENT_ID           = 'summarize-content'
+  const ERROR_ID             = 'summarize-error'
+  const ADD_MODEL_ITEM_ID    = 'add-custom-model'
+  const RETRY_BUTTON_ID      = 'summarize-retry-button'
+  const CHAT_TOGGLE_ID       = 'summarize-chat-toggle'
+  const CHAT_CONTAINER_ID    = 'summarize-chat-container'
+  const CHAT_MESSAGES_ID     = 'summarize-chat-messages'
+  const CHAT_INPUT_ID        = 'summarize-chat-input'
+  const CHAT_SEND_ID         = 'summarize-chat-send'
 
   // GM Storage Key for custom models
   const CUSTOM_MODELS_KEY = 'custom_ai_models'
@@ -40,6 +45,9 @@
   const HIGH_MAX_TOKENS     = 1500
   // Long press duration (ms)
   const LONG_PRESS_DURATION = 500
+  // Request timeouts (ms)
+  const DEFAULT_TIMEOUT     = 60000   // 60 seconds for non-thinking models
+  const THINKING_TIMEOUT    = 180000  // 180 seconds (3 min) for thinking models
 
   // Default AI model configurations
   const MODEL_GROUPS = {
@@ -60,18 +68,18 @@
       baseUrl      : 'https://generativelanguage.googleapis.com/v1beta/models/',
       models       : [
         {
-          id    : 'gemini-2.5-flash-lite-preview-06-17',
-          name  : 'Gemini 2.5 Flash Lite (faster)',
+          id    : 'gemini-flash-lite-latest',
+          name  : 'Gemini Flash Lite (faster)',
           params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingBudget: 0 } } // Thinking explicitly disabled
         },
         {
-          id    : 'gemini-2.5-flash-preview-04-17',
-          name  : 'Gemini 2.5 Flash',
+          id    : 'gemini-flash-latest',
+          name  : 'Gemini Flash',
           params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingBudget: 0 } } // Thinking explicitly disabled
         },
         {
-          id    : 'gemini-2.5-pro',
-          name  : 'Gemini 2.5 Pro (better)',
+          id    : 'gemini-pro-latest',
+          name  : 'Gemini Pro (better)',
           params: { maxOutputTokens: HIGH_MAX_TOKENS } // No thinkingConfig, Gemini API default (thinking enabled) will be used
         },
       ],
@@ -82,11 +90,18 @@
   // AI Prompt Template
   const PROMPT_TEMPLATE = (title, content, lang) => `You are a summarizer bot that provides clear and affirmative explanations of content.
 		Generate a concise summary that includes:
-		- 2-sentence introduction
-		- Relevant emojis as bullet points
+		- **CRITICAL - First paragraph (Direct Answer):** The first paragraph MUST directly and succinctly answer the main question implied by the article's title. Article titles are often clickbait or attention-grabbing hooks designed to make readers curious. Your job is to immediately satisfy that curiosity in 1-2 sentences. Ask yourself: "What does the reader most want to know after reading this title?" and answer that directly. This paragraph should be the TL;DR that gives the reader the core answer they came looking for.
+		- Relevant emojis as bullet points with key supporting details
 		- No section headers
 		- Use HTML formatting, never use \`\`\` code blocks, never use markdown.
-		- After the last bullet point, add a 2-sentence conclusion that presents your own informed opinion. This opinion should be based on your general knowledge and advanced reasoning capabilities, not solely on the article's content. It must include a critical perspective, incorporating relevant information or broader context that may not be explicitly detailed in the article, and explain why you hold this view. Do not state "I agree" or "I disagree"; instead, present your reasoned viewpoint directly. Start this conclusion with "<strong>Opinion:</strong> ". Give your opinion as a human.
+		- **CRITICAL - Opinion paragraph:** After the bullet points, add a conclusion paragraph starting with "<strong>Opinion:</strong> " that presents YOUR informed, skeptical but honest perspective. This opinion should:
+			* Be like advice from a knowledgeable friend who has expertise in the subject - direct, simple, clear, and confident
+			* Be genuinely skeptical when warranted, but NOT contrarian just for the sake of it - if the article is correct, acknowledge it
+			* Point out what the article may have omitted, exaggerated, or gotten wrong - but only if truly applicable
+			* Provide broader context that helps the reader understand the real significance (or lack thereof)
+			* Be stated with conviction and authority, as someone who truly understands the topic would speak
+			* Avoid hedging language like "it seems", "perhaps", "one might argue" - be direct and own your opinion
+			* Never say "I agree" or "I disagree" - just state your view as fact
 		- User language to be used in the entire summary: ${lang}
 		- Before everything, add quality of the article, like "<strong>Article Quality:</strong> <span class=article-good>8/10</span>", where 1 is bad and 10 is excellent.
 		- For the quality class use:
@@ -106,26 +121,28 @@
 
 		Example output format:
 		<p><strong>Article Quality:</strong> <span class="article-good">8/10</span></p>
-		<p>This is a two-sentence introduction to the summary. It provides a brief overview of the main topic.</p>
+		<p>[DIRECT ANSWER to what the title promises/implies - what the reader most wants to know, answered immediately and concisely]</p>
 		<ul>
-		<li>emoji_here Topic one is discussed here in a clear and concise manner.</li>
-		<li>emoji_here Topic two follows, explaining another key point from the article.</li>
-		<li>emoji_here Others optional bullet points can be added here.</li>
-		<li>emoji_here The final bullet point covers the last major idea.</li>
+		<li>emoji_here Key supporting detail or evidence from the article.</li>
+		<li>emoji_here Another important point that adds context.</li>
+		<li>emoji_here Additional relevant information.</li>
+		<li>emoji_here Final key takeaway from the article.</li>
 		</ul>
-		<p><strong>Opinion:</strong> This is a two-sentence conclusion. It offers a thoughtful perspective based on broader knowledge.</p>
+		<p><strong>Opinion:</strong> [Your direct, authoritative take on this topic. Speak with the confidence of an expert giving their honest assessment. Be skeptical where warranted but fair. Point out what matters and what doesn't. No hedging - own your perspective.]</p>
 
 		Here is the content to summarize:
 		Article Title: ${title}
 		Article Content: ${content}`
 
   // --- State Variables ---
-  let activeModel     = 'gemini-2.5'
+  let activeModel     = 'gemini-flash-lite-latest'
   let articleData     = null
   let customModels    = [] // Stores {id, service, supportsThinking?: boolean}
   let longPressTimer  = null
   let isLongPress     = false
   let modelPressTimer = null
+  let chatHistory     = [] // Stores conversation history for chat feature
+  let lastSummary     = '' // Stores the last generated summary for chat context
 
   // --- Main Functions ---
 
@@ -414,6 +431,35 @@
   }
 
   /**
+   * Builds the header buttons HTML (chat toggle + close).
+   * @param {boolean} showChat - Whether to show the chat button.
+   * @returns {string}
+   */
+  function buildHeaderButtonsHTML(showChat = false) {
+    const chatBtn = showChat
+      ? `<button id="${CHAT_TOGGLE_ID}" class="summarize-header-btn" title="Continue conversation">💬</button>`
+      : ''
+    return `<div class="summarize-header-buttons">
+      ${chatBtn}
+      <button id="${CLOSE_BUTTON_ID}" class="summarize-header-btn" title="Close (Esc)">×</button>
+    </div>`
+  }
+
+  /**
+   * Builds the chat interface HTML.
+   * @returns {string}
+   */
+  function buildChatHTML() {
+    return `<div id="${CHAT_CONTAINER_ID}">
+      <div id="${CHAT_MESSAGES_ID}"></div>
+      <div id="summarize-chat-input-container">
+        <input type="text" id="${CHAT_INPUT_ID}" placeholder="Ask a follow-up question about this article..." />
+        <button id="${CHAT_SEND_ID}">Send</button>
+      </div>
+    </div>`
+  }
+
+  /**
    * Shows the summary overlay.
    * @param {string} contentHTML
    * @param {boolean} [isError=false]
@@ -424,21 +470,36 @@
       return
     }
 
+    // Reset chat history when showing new summary
+    chatHistory = []
+
     const overlay = document.createElement('div')
     overlay.id    = OVERLAY_ID
 
-    let finalContentHTML = `<div id="${CLOSE_BUTTON_ID}" title="Close (Esc)">×</div>${contentHTML}`
+    const showChatButton   = !isError && !contentHTML.includes('class="glow"')
+    let finalContentHTML   = buildHeaderButtonsHTML(showChatButton)
+    finalContentHTML      += `<div class="summarize-body">${contentHTML}</div>`
+
     if (isError) {
       finalContentHTML += `<button id="${RETRY_BUTTON_ID}" class="retry-button">Try Again</button>`
     }
+    else if (showChatButton) {
+      finalContentHTML += buildChatHTML()
+    }
+
     overlay.innerHTML = `<div id="${CONTENT_ID}">${finalContentHTML}</div>`
 
     document.body.appendChild(overlay)
     document.body.style.overflow = 'hidden'
 
-    document.getElementById(CLOSE_BUTTON_ID).addEventListener('click', closeOverlay)
+    document.getElementById(CLOSE_BUTTON_ID)?.addEventListener('click', closeOverlay)
     overlay.addEventListener('click', e => e.target === overlay && closeOverlay())
     document.getElementById(RETRY_BUTTON_ID)?.addEventListener('click', processSummarization)
+
+    // Setup chat if available
+    if (showChatButton) {
+      setupChatListeners()
+    }
   }
 
   /**
@@ -460,14 +521,28 @@
   function updateSummaryOverlay(contentHTML, isError = false) {
     const contentDiv = document.getElementById(CONTENT_ID)
     if (contentDiv) {
-      let finalContentHTML = `<div id="${CLOSE_BUTTON_ID}" title="Close (Esc)">×</div>${contentHTML}`
+      const showChatButton   = !isError && !contentHTML.includes('class="glow"')
+      let finalContentHTML   = buildHeaderButtonsHTML(showChatButton)
+      finalContentHTML      += `<div class="summarize-body">${contentHTML}</div>`
+
       if (isError) {
         finalContentHTML += `<button id="${RETRY_BUTTON_ID}" class="retry-button">Try Again</button>`
       }
+      else if (showChatButton) {
+        finalContentHTML += buildChatHTML()
+        // Store summary for chat context
+        lastSummary = contentHTML
+      }
+
       contentDiv.innerHTML = finalContentHTML
 
       document.getElementById(CLOSE_BUTTON_ID)?.addEventListener('click', closeOverlay)
       document.getElementById(RETRY_BUTTON_ID)?.addEventListener('click', processSummarization)
+
+      // Setup chat if available
+      if (showChatButton) {
+        setupChatListeners()
+      }
     }
   }
 
@@ -504,6 +579,284 @@
     if (el) {
       el.style.display = (id === BUTTON_ID) ? 'flex' : 'block'
     }
+  }
+
+  // --- Chat Functions ---
+
+  /**
+   * Sets up event listeners for the chat interface.
+   */
+  function setupChatListeners() {
+    const chatToggle = document.getElementById(CHAT_TOGGLE_ID)
+    const chatInput  = document.getElementById(CHAT_INPUT_ID)
+    const chatSend   = document.getElementById(CHAT_SEND_ID)
+
+    chatToggle?.addEventListener('click', toggleChat)
+
+    chatSend?.addEventListener('click', () => sendChatMessage())
+
+    chatInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        sendChatMessage()
+      }
+      // Stop escape from closing overlay when typing
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        chatInput.blur()
+      }
+    })
+  }
+
+  /**
+   * Toggles the chat interface visibility.
+   */
+  function toggleChat() {
+    const chatContainer = document.getElementById(CHAT_CONTAINER_ID)
+    if (chatContainer) {
+      chatContainer.classList.toggle('active')
+      if (chatContainer.classList.contains('active')) {
+        document.getElementById(CHAT_INPUT_ID)?.focus()
+      }
+    }
+  }
+
+  /**
+   * Adds a message to the chat display.
+   * @param {string} text
+   * @param {string} role - 'user' or 'assistant'
+   */
+  function addChatMessage(text, role) {
+    const messagesDiv = document.getElementById(CHAT_MESSAGES_ID)
+    if (!messagesDiv) return
+
+    const msgDiv       = document.createElement('div')
+    msgDiv.className   = `chat-message ${role}`
+    msgDiv.innerHTML   = role === 'assistant' ? text : escapeHtml(text)
+    messagesDiv.appendChild(msgDiv)
+    messagesDiv.scrollTop = messagesDiv.scrollHeight
+  }
+
+  /**
+   * Escapes HTML special characters.
+   * @param {string} text
+   * @returns {string}
+   */
+  function escapeHtml(text) {
+    const div       = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+
+  /**
+   * Sends a chat message and gets AI response.
+   */
+  async function sendChatMessage() {
+    const chatInput = document.getElementById(CHAT_INPUT_ID)
+    const chatSend  = document.getElementById(CHAT_SEND_ID)
+    const message   = chatInput?.value?.trim()
+
+    if (!message || !articleData) return
+
+    // Disable input while processing
+    chatInput.disabled = true
+    chatSend.disabled  = true
+    chatInput.value    = ''
+
+    // Add user message to display
+    addChatMessage(message, 'user')
+
+    // Add to history
+    chatHistory.push({ role: 'user', content: message })
+
+    try {
+      const modelConfig = getActiveModelConfig()
+      if (!modelConfig) {
+        throw new Error('Model configuration not found')
+      }
+
+      const apiKey = await getApiKey(modelConfig.service)
+      if (!apiKey) {
+        throw new Error('API key not found')
+      }
+
+      // Add loading indicator
+      const loadingDiv     = document.createElement('div')
+      loadingDiv.className = 'chat-message assistant'
+      loadingDiv.innerHTML = '<span class="glow" style="padding: 0; font-size: 1em;">Thinking...</span>'
+      loadingDiv.id        = 'chat-loading'
+      document.getElementById(CHAT_MESSAGES_ID)?.appendChild(loadingDiv)
+
+      const response = await sendChatRequest(modelConfig.service, apiKey, modelConfig)
+
+      // Remove loading indicator
+      document.getElementById('chat-loading')?.remove()
+
+      // Parse and display response
+      const assistantMessage = parseChatResponse(response, modelConfig.service)
+      chatHistory.push({ role: 'assistant', content: assistantMessage })
+      addChatMessage(assistantMessage, 'assistant')
+
+    }
+    catch (error) {
+      document.getElementById('chat-loading')?.remove()
+      addChatMessage(`Error: ${error.message}`, 'assistant')
+    }
+    finally {
+      chatInput.disabled = false
+      chatSend.disabled  = false
+      chatInput.focus()
+    }
+  }
+
+  /**
+   * Sends a chat request to the AI API.
+   * @param {string} service
+   * @param {string} apiKey
+   * @param {object} modelConfig
+   * @returns {Promise<object>}
+   */
+  async function sendChatRequest(service, apiKey, modelConfig) {
+    const group = MODEL_GROUPS[service]
+    const url   = service === 'openai'
+      ? group.baseUrl
+      : `${group.baseUrl}${modelConfig.id}:generateContent?key=${apiKey}`
+
+    const body    = buildChatRequestBody(service, modelConfig)
+    const timeout = getRequestTimeout(modelConfig)
+
+    return new Promise((resolve, reject) => {
+      GM.xmlHttpRequest({
+        method      : 'POST',
+        url         : url,
+        headers     : getHeaders(service, apiKey),
+        data        : JSON.stringify(body),
+        responseType: 'json',
+        timeout     : timeout,
+        onload      : response => {
+          const responseData = response.response || response.responseText
+          if (response.status < 200 || response.status >= 300) {
+            const errorData = typeof responseData === 'object' ? responseData : JSON.parse(responseData || '{}')
+            reject(new Error(errorData?.error?.message || `API Error ${response.status}`))
+          }
+          else {
+            resolve({
+              status: response.status,
+              data  : typeof responseData === 'object' ? responseData : JSON.parse(responseData || '{}')
+            })
+          }
+        },
+        onerror  : () => reject(new Error('Network error')),
+        onabort  : () => reject(new Error('Request aborted')),
+        ontimeout: () => reject(new Error('Request timed out')),
+      })
+    })
+  }
+
+  /**
+   * Builds the chat request body.
+   * @param {string} service
+   * @param {object} modelConfig
+   * @returns {object}
+   */
+  function buildChatRequestBody(service, modelConfig) {
+    const lang          = navigator.language || 'en-US'
+    const systemContext = `You are a helpful assistant discussing an article. Here's the context:
+
+Article Title: ${articleData.title}
+Article Summary: ${lastSummary.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()}
+
+Respond helpfully to questions about this article. Use ${lang} language. Use HTML formatting for responses (no markdown, no code blocks). Keep responses concise but informative.`
+
+    if (service === 'openai') {
+      const messages = [
+        { role: 'system', content: systemContext },
+        ...chatHistory.map(m => ({ role: m.role, content: m.content }))
+      ]
+
+      const serviceDefaults     = MODEL_GROUPS.openai.defaultParams || {}
+      const modelSpecificParams = modelConfig.params || {}
+      const finalParams         = { ...serviceDefaults, ...modelSpecificParams }
+
+      return {
+        model: modelConfig.id,
+        messages,
+        ...finalParams
+      }
+    }
+    else { // gemini
+      const contents = []
+
+      // Add system context as first user message
+      contents.push({ role: 'user', parts: [ { text: systemContext } ] })
+      contents.push({ role: 'model', parts: [ { text: 'I understand. I will help answer questions about this article.' } ] })
+
+      // Add chat history
+      chatHistory.forEach(m => {
+        contents.push({
+          role : m.role === 'user' ? 'user' : 'model',
+          parts: [ { text: m.content } ]
+        })
+      })
+
+      const geminiDefaults        = MODEL_GROUPS.gemini.defaultParams || {}
+      const modelParamsFromConfig = modelConfig.params || {}
+      let finalGenerationConfig   = { ...geminiDefaults, ...modelParamsFromConfig }
+
+      if (modelConfig.isCustom) {
+        if (modelConfig.supportsThinking === true) {
+          delete finalGenerationConfig.thinkingConfig
+        }
+        else {
+          finalGenerationConfig.thinkingConfig = { thinkingBudget: 0 }
+        }
+      }
+
+      return {
+        contents,
+        generationConfig: finalGenerationConfig
+      }
+    }
+  }
+
+  /**
+   * Parses chat response from API.
+   * @param {object} response
+   * @param {string} service
+   * @returns {string}
+   */
+  function parseChatResponse(response, service) {
+    if (service === 'openai') {
+      return response.data?.choices?.[0]?.message?.content || 'No response received'
+    }
+    else {
+      const candidate = response.data?.candidates?.[0]
+      if (candidate?.content?.parts?.length > 0) {
+        return candidate.content.parts[0].text || 'No response received'
+      }
+      return 'No response received'
+    }
+  }
+
+  /**
+   * Gets the appropriate timeout for a model.
+   * @param {object} modelConfig
+   * @returns {number}
+   */
+  function getRequestTimeout(modelConfig) {
+    // Check if model has thinking enabled
+    const hasThinking = modelConfig.params && !modelConfig.params.thinkingConfig
+    const isProModel  = modelConfig.id.toLowerCase().includes('pro')
+    const isO3orO4    = /^o[34]/i.test(modelConfig.id)
+
+    // Custom models with thinking support
+    const customWithThinking = modelConfig.isCustom && modelConfig.supportsThinking === true
+
+    if (hasThinking || isProModel || isO3orO4 || customWithThinking) {
+      return THINKING_TIMEOUT
+    }
+
+    return DEFAULT_TIMEOUT
   }
 
   // --- Logic Functions (Summarization, API, Models) ---
@@ -592,10 +945,11 @@
    * @returns {Promise<object>}
    */
   async function sendApiRequest(service, apiKey, payload, modelConfig) {
-    const group = MODEL_GROUPS[service]
-    const url   = service === 'openai'
+    const group   = MODEL_GROUPS[service]
+    const url     = service === 'openai'
       ? group.baseUrl
       : `${group.baseUrl}${modelConfig.id}:generateContent?key=${apiKey}`
+    const timeout = getRequestTimeout(modelConfig)
 
     return new Promise((resolve, reject) => {
       GM.xmlHttpRequest({
@@ -604,7 +958,7 @@
         headers     : getHeaders(service, apiKey),
         data        : JSON.stringify(buildRequestBody(service, payload, modelConfig)),
         responseType: 'json',
-        timeout     : 60000,
+        timeout     : timeout,
         onload      : response => {
           const responseData = response.response || response.responseText
           resolve({
@@ -615,7 +969,7 @@
         },
         onerror     : error => reject(new Error(`Network error: ${error.statusText || 'Failed to connect'}`)),
         onabort     : () => reject(new Error('Request aborted')),
-        ontimeout   : () => reject(new Error('Request timed out after 60 seconds')),
+        ontimeout   : () => reject(new Error(`Request timed out after ${timeout / 1000} seconds`)),
       })
     })
   }
@@ -851,7 +1205,7 @@
       await GM.setValue(CUSTOM_MODELS_KEY, JSON.stringify(customModels))
 
       if (activeModel === modelId) {
-        activeModel = 'gemini-2.5-flash-lite-preview-06-17'
+        activeModel = 'gemini-flash-lite-latest'
         await GM.setValue('last_used_model', activeModel)
       }
 
@@ -949,177 +1303,668 @@
    */
   function injectStyles() {
     GM.addStyle(`
+      /* --- CSS Reset & Isolation for Summary Elements --- */
+      #${OVERLAY_ID},
+      #${OVERLAY_ID} *,
+      #${DROPDOWN_ID},
+      #${DROPDOWN_ID} *,
+      #${BUTTON_ID},
+      #${ERROR_ID} {
+        all: revert !important;
+        box-sizing: border-box !important;
+      }
+
+      /* --- Typography Variables --- */
+      :root {
+        --summarize-font-reading: 'Georgia', 'Times New Roman', 'Noto Serif', serif;
+        --summarize-font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        --summarize-z-button: 2147483640;
+        --summarize-z-dropdown: 2147483641;
+        --summarize-z-overlay: 2147483645;
+        --summarize-z-error: 2147483646;
+      }
+
       /* --- Main UI Elements --- */
       #${BUTTON_ID} {
-        position: fixed; bottom: 20px; right: 20px;
-        width: 50px; height: 50px;
-        background: linear-gradient(145deg, #3a7bd5, #00d2ff);
-        color: white; font-size: 24px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        border-radius: 50%; cursor: pointer; z-index: 2147483640;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-        display: flex !important; align-items: center !important; justify-content: center !important;
-        transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
-        line-height: 1; user-select: none;
-        -webkit-tap-highlight-color: transparent;
+        position: fixed !important;
+        bottom: 20px !important;
+        right: 20px !important;
+        width: 50px !important;
+        height: 50px !important;
+        background: linear-gradient(145deg, #3a7bd5, #00d2ff) !important;
+        color: white !important;
+        font-size: 24px !important;
+        font-family: var(--summarize-font-ui) !important;
+        border-radius: 50% !important;
+        cursor: pointer !important;
+        z-index: var(--summarize-z-button) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: transform 0.2s ease-out, box-shadow 0.2s ease-out !important;
+        line-height: 1 !important;
+        user-select: none !important;
+        -webkit-tap-highlight-color: transparent !important;
+        border: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
       }
       #${BUTTON_ID}:hover {
-        transform: scale(1.1); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+        transform: scale(1.1) !important;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3) !important;
       }
+
       #${DROPDOWN_ID} {
-        position: fixed; bottom: 80px; right: 20px;
-        background: #ffffff; border: 1px solid #e0e0e0; border-radius: 10px;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15); z-index: 2147483641;
-        max-height: 70vh; overflow-y: auto;
-        padding: 8px; width: 300px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        display: none;
-        animation: fadeIn 0.2s ease-out;
+        position: fixed !important;
+        bottom: 80px !important;
+        right: 20px !important;
+        background: #ffffff !important;
+        border: 1px solid #e0e0e0 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18) !important;
+        z-index: var(--summarize-z-dropdown) !important;
+        max-height: 70vh !important;
+        overflow-y: auto !important;
+        padding: 10px !important;
+        width: 300px !important;
+        font-family: var(--summarize-font-ui) !important;
+        display: none !important;
+        animation: summarize-fadeIn 0.2s ease-out !important;
       }
+
       #${OVERLAY_ID} {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background-color: rgba(0, 0, 0, 0.6);
-        z-index: 2147483645;
-        display: flex; align-items: center; justify-content: center;
-        overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        animation: fadeIn 0.3s ease-out;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.7) !important;
+        z-index: var(--summarize-z-overlay) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        overflow: hidden !important;
+        font-family: var(--summarize-font-ui) !important;
+        animation: summarize-fadeIn 0.3s ease-out !important;
+        margin: 0 !important;
+        padding: 20px !important;
+        backdrop-filter: blur(4px) !important;
       }
+
       #${CONTENT_ID} {
-        background-color: #fff;
-        color: #333;
-        padding: 25px 35px; border-radius: 12px;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        max-width: 800px; width: 90%; max-height: 85vh;
-        overflow-y: auto;
-        position: relative;
-        font-size: 16px; line-height: 1.6;
-        animation: slideInUp 0.3s ease-out;
-        white-space: normal;
-        box-sizing: border-box;
+        background-color: #fefefe !important;
+        color: #2d2d2d !important;
+        padding: 32px 40px !important;
+        border-radius: 16px !important;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3) !important;
+        max-width: 720px !important;
+        width: 100% !important;
+        max-height: 85vh !important;
+        overflow-y: auto !important;
+        position: relative !important;
+        font-family: var(--summarize-font-reading) !important;
+        font-size: 18px !important;
+        line-height: 1.75 !important;
+        letter-spacing: 0.01em !important;
+        animation: summarize-slideInUp 0.3s ease-out !important;
+        white-space: normal !important;
+        text-align: left !important;
+        word-wrap: break-word !important;
+        -webkit-font-smoothing: antialiased !important;
+        -moz-osx-font-smoothing: grayscale !important;
       }
-      #${CONTENT_ID} p { margin-top: 0; margin-bottom: 1em; }
-      #${CONTENT_ID} ul { margin: 1em 0; padding-left: 1.5em; }
-      #${CONTENT_ID} li { list-style-type: none; margin-bottom: 0.5em; }
+
+      #${CONTENT_ID} p {
+        margin: 0 0 1.2em 0 !important;
+        font-family: var(--summarize-font-reading) !important;
+        font-size: 18px !important;
+        line-height: 1.75 !important;
+        color: inherit !important;
+      }
+
+      #${CONTENT_ID} p:first-of-type {
+        font-size: 19px !important;
+        font-weight: 500 !important;
+        color: #1a1a1a !important;
+      }
+
+      #${CONTENT_ID} p:last-of-type {
+        border-top: 1px solid rgba(0,0,0,0.1) !important;
+        padding-top: 1em !important;
+        margin-top: 1.5em !important;
+        font-style: italic !important;
+      }
+
+      #${CONTENT_ID} ul {
+        margin: 1.2em 0 !important;
+        padding-left: 0.5em !important;
+        list-style: none !important;
+      }
+
+      #${CONTENT_ID} li {
+        list-style-type: none !important;
+        margin-bottom: 0.8em !important;
+        padding-left: 0.3em !important;
+        font-family: var(--summarize-font-reading) !important;
+        font-size: 17px !important;
+        line-height: 1.7 !important;
+        color: #3d3d3d !important;
+      }
+
+      #${CONTENT_ID} strong {
+        font-weight: 700 !important;
+        color: #1a1a1a !important;
+      }
+
+      /* --- Summary Body Container --- */
+      .summarize-body {
+        margin-top: 8px !important;
+      }
+
+      /* --- Header with Close & Chat Buttons --- */
+      .summarize-header-buttons {
+        position: absolute !important;
+        top: 16px !important;
+        right: 20px !important;
+        display: flex !important;
+        gap: 8px !important;
+        align-items: center !important;
+        z-index: 10 !important;
+      }
+
+      .summarize-header-btn {
+        width: 36px !important;
+        height: 36px !important;
+        border-radius: 50% !important;
+        border: none !important;
+        cursor: pointer !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: all 0.2s ease !important;
+        font-size: 20px !important;
+        line-height: 1 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+
       #${CLOSE_BUTTON_ID} {
-        position: absolute; top: 15px; right: 20px;
-        font-size: 28px; color: #aaa;
-        cursor: pointer;
-        transition: color 0.2s; line-height: 1; z-index: 1;
+        background: rgba(0,0,0,0.05) !important;
+        color: #666 !important;
       }
-      #${CLOSE_BUTTON_ID}:hover { color: #333; }
+      #${CLOSE_BUTTON_ID}:hover {
+        background: rgba(0,0,0,0.1) !important;
+        color: #333 !important;
+      }
+
+      #summarize-chat-toggle {
+        background: linear-gradient(145deg, #3a7bd5, #00d2ff) !important;
+        color: white !important;
+        font-size: 16px !important;
+      }
+      #summarize-chat-toggle:hover {
+        transform: scale(1.1) !important;
+        box-shadow: 0 4px 12px rgba(58, 123, 213, 0.4) !important;
+      }
+
+      /* --- Chat Interface --- */
+      #summarize-chat-container {
+        margin-top: 24px !important;
+        border-top: 2px solid rgba(58, 123, 213, 0.2) !important;
+        padding-top: 20px !important;
+        display: none !important;
+      }
+
+      #summarize-chat-container.active {
+        display: block !important;
+      }
+
+      #summarize-chat-messages {
+        max-height: 200px !important;
+        overflow-y: auto !important;
+        margin-bottom: 12px !important;
+        padding: 12px !important;
+        background: rgba(0,0,0,0.02) !important;
+        border-radius: 12px !important;
+        font-family: var(--summarize-font-reading) !important;
+      }
+
+      .chat-message {
+        margin-bottom: 12px !important;
+        padding: 10px 14px !important;
+        border-radius: 12px !important;
+        font-size: 15px !important;
+        line-height: 1.6 !important;
+        max-width: 85% !important;
+      }
+
+      .chat-message.user {
+        background: linear-gradient(145deg, #3a7bd5, #00d2ff) !important;
+        color: white !important;
+        margin-left: auto !important;
+        border-bottom-right-radius: 4px !important;
+      }
+
+      .chat-message.assistant {
+        background: rgba(0,0,0,0.05) !important;
+        color: #2d2d2d !important;
+        margin-right: auto !important;
+        border-bottom-left-radius: 4px !important;
+      }
+
+      #summarize-chat-input-container {
+        display: flex !important;
+        gap: 10px !important;
+        align-items: stretch !important;
+      }
+
+      #summarize-chat-input {
+        flex: 1 !important;
+        padding: 12px 16px !important;
+        border: 2px solid rgba(58, 123, 213, 0.3) !important;
+        border-radius: 12px !important;
+        font-family: var(--summarize-font-ui) !important;
+        font-size: 15px !important;
+        outline: none !important;
+        transition: border-color 0.2s !important;
+        background: white !important;
+        color: #2d2d2d !important;
+      }
+
+      #summarize-chat-input:focus {
+        border-color: #3a7bd5 !important;
+      }
+
+      #summarize-chat-input::placeholder {
+        color: #999 !important;
+      }
+
+      #summarize-chat-send {
+        padding: 12px 20px !important;
+        background: linear-gradient(145deg, #3a7bd5, #00d2ff) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        cursor: pointer !important;
+        font-family: var(--summarize-font-ui) !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        transition: all 0.2s !important;
+      }
+
+      #summarize-chat-send:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 4px 12px rgba(58, 123, 213, 0.4) !important;
+      }
+
+      #summarize-chat-send:disabled {
+        opacity: 0.6 !important;
+        cursor: not-allowed !important;
+        transform: none !important;
+      }
+
       #${ERROR_ID} {
-        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-        background-color: #e53e3e; color: white; padding: 12px 20px;
-        border-radius: 6px; z-index: 2147483646;
-        font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        animation: fadeIn 0.3s, fadeOut 0.3s 3.7s forwards;
+        position: fixed !important;
+        bottom: 20px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        background-color: #dc2626 !important;
+        color: white !important;
+        padding: 14px 24px !important;
+        border-radius: 10px !important;
+        z-index: var(--summarize-z-error) !important;
+        font-size: 14px !important;
+        font-weight: 500 !important;
+        box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4) !important;
+        font-family: var(--summarize-font-ui) !important;
+        animation: summarize-fadeIn 0.3s, summarize-fadeOut 0.3s 3.7s forwards !important;
       }
+
       .retry-button {
-        display: block; margin: 20px auto 0; padding: 8px 16px;
-        background-color: #4a90e2;
-        color: white; border: none; border-radius: 5px;
-        cursor: pointer; font-size: 14px; transition: background-color 0.2s;
+        display: block !important;
+        margin: 24px auto 0 !important;
+        padding: 12px 24px !important;
+        background: linear-gradient(145deg, #3a7bd5, #00d2ff) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 10px !important;
+        cursor: pointer !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        font-family: var(--summarize-font-ui) !important;
+        transition: all 0.2s !important;
       }
-      .retry-button:hover { background-color: #3a7bd5; }
+      .retry-button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 4px 12px rgba(58, 123, 213, 0.4) !important;
+      }
 
       /* --- Dropdown Styles --- */
-      .model-group { margin-bottom: 8px; }
-      .group-header-container {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 8px 12px; background: #f7f7f7;
-        border-radius: 6px; margin-bottom: 4px;
+      #${DROPDOWN_ID} .model-group {
+        margin-bottom: 10px !important;
       }
-      .group-header-text {
-        font-weight: 600; color: #333; font-size: 13px;
-        text-transform: uppercase; letter-spacing: 0.5px;
-        flex-grow: 1;
+
+      #${DROPDOWN_ID} .group-header-container {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 10px 14px !important;
+        background: #f5f5f5 !important;
+        border-radius: 8px !important;
+        margin-bottom: 6px !important;
       }
-      .reset-key-link {
-        font-size: 11px; color: #666; text-decoration: none;
-        margin-left: 10px;
-        white-space: nowrap;
-        cursor: pointer;
-        transition: color 0.2s;
+
+      #${DROPDOWN_ID} .group-header-text {
+        font-weight: 700 !important;
+        color: #333 !important;
+        font-size: 12px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.8px !important;
+        flex-grow: 1 !important;
       }
-      .reset-key-link:hover { color: #1a73e8; }
-      .model-item {
-        padding: 10px 14px; margin: 2px 0; border-radius: 6px;
-        transition: background-color 0.15s ease-out, color 0.15s ease-out;
-        font-size: 14px; cursor: pointer; color: #444; display: block;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+
+      #${DROPDOWN_ID} .reset-key-link {
+        font-size: 11px !important;
+        color: #888 !important;
+        text-decoration: none !important;
+        margin-left: 10px !important;
+        white-space: nowrap !important;
+        cursor: pointer !important;
+        transition: color 0.2s !important;
       }
-      .model-item:hover { background-color: #eef6ff; color: #1a73e8; }
-      .add-model-item {
-         color: #666;
-         font-style: italic;
+      #${DROPDOWN_ID} .reset-key-link:hover {
+        color: #3a7bd5 !important;
       }
-      .add-model-item:hover { background-color: #f0f0f0; color: #333; }
+
+      #${DROPDOWN_ID} .model-item {
+        padding: 11px 14px !important;
+        margin: 3px 0 !important;
+        border-radius: 8px !important;
+        transition: all 0.15s ease-out !important;
+        font-size: 14px !important;
+        cursor: pointer !important;
+        color: #444 !important;
+        display: block !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        background: transparent !important;
+      }
+      #${DROPDOWN_ID} .model-item:hover {
+        background-color: rgba(58, 123, 213, 0.1) !important;
+        color: #3a7bd5 !important;
+      }
+
+      #${DROPDOWN_ID} .add-model-item {
+        color: #888 !important;
+        font-style: italic !important;
+      }
+      #${DROPDOWN_ID} .add-model-item:hover {
+        background-color: #f0f0f0 !important;
+        color: #555 !important;
+      }
+
+      #${DROPDOWN_ID} hr {
+        margin: 10px 0 !important;
+        border: none !important;
+        border-top: 1px solid #e5e5e5 !important;
+      }
 
       /* --- Content Styles (Glow, Article Quality) --- */
       .glow {
-        font-size: 1.4em; text-align: center; padding: 40px 0;
-        animation: glow 2.5s ease-in-out infinite;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        font-weight: 400;
+        font-size: 1.5em !important;
+        text-align: center !important;
+        padding: 50px 20px !important;
+        animation: summarize-glow 2.5s ease-in-out infinite !important;
+        font-family: var(--summarize-font-ui) !important;
+        font-weight: 500 !important;
       }
-      span.article-excellent { color: #2ecc71; font-weight: bold; }
-      span.article-good      { color: #3498db; font-weight: bold; }
-      span.article-average   { color: #f39c12; font-weight: bold; }
-      span.article-bad       { color: #e74c3c; font-weight: bold; }
-      span.article-very-bad  { color: #c0392b; font-weight: bold; }
+
+      #${CONTENT_ID} span.article-excellent {
+        color: #059669 !important;
+        font-weight: 700 !important;
+      }
+      #${CONTENT_ID} span.article-good {
+        color: #2563eb !important;
+        font-weight: 700 !important;
+      }
+      #${CONTENT_ID} span.article-average {
+        color: #d97706 !important;
+        font-weight: 700 !important;
+      }
+      #${CONTENT_ID} span.article-bad {
+        color: #dc2626 !important;
+        font-weight: 700 !important;
+      }
+      #${CONTENT_ID} span.article-very-bad {
+        color: #991b1b !important;
+        font-weight: 700 !important;
+      }
+
+      /* --- Scrollbar Styling --- */
+      #${CONTENT_ID}::-webkit-scrollbar,
+      #${DROPDOWN_ID}::-webkit-scrollbar,
+      #summarize-chat-messages::-webkit-scrollbar {
+        width: 8px !important;
+      }
+      #${CONTENT_ID}::-webkit-scrollbar-track,
+      #${DROPDOWN_ID}::-webkit-scrollbar-track,
+      #summarize-chat-messages::-webkit-scrollbar-track {
+        background: transparent !important;
+      }
+      #${CONTENT_ID}::-webkit-scrollbar-thumb,
+      #${DROPDOWN_ID}::-webkit-scrollbar-thumb,
+      #summarize-chat-messages::-webkit-scrollbar-thumb {
+        background: rgba(0,0,0,0.2) !important;
+        border-radius: 4px !important;
+      }
+      #${CONTENT_ID}::-webkit-scrollbar-thumb:hover,
+      #${DROPDOWN_ID}::-webkit-scrollbar-thumb:hover,
+      #summarize-chat-messages::-webkit-scrollbar-thumb:hover {
+        background: rgba(0,0,0,0.3) !important;
+      }
 
       /* --- Animations --- */
-      @keyframes glow {
-        0%, 100% { color: #4a90e2; text-shadow: 0 0 10px rgba(74, 144, 226, 0.6), 0 0 20px rgba(74, 144, 226, 0.4); }
-        33%      { color: #9b59b6; text-shadow: 0 0 12px rgba(155, 89, 182, 0.7), 0 0 25px rgba(155, 89, 182, 0.5); }
-        66%      { color: #e74c3c; text-shadow: 0 0 12px rgba(231, 76, 60, 0.7), 0 0 25px rgba(231, 76, 60, 0.5); }
+      @keyframes summarize-glow {
+        0%, 100% { color: #3a7bd5; text-shadow: 0 0 12px rgba(58, 123, 213, 0.6), 0 0 24px rgba(58, 123, 213, 0.4); }
+        33%      { color: #8b5cf6; text-shadow: 0 0 14px rgba(139, 92, 246, 0.7), 0 0 28px rgba(139, 92, 246, 0.5); }
+        66%      { color: #ec4899; text-shadow: 0 0 14px rgba(236, 72, 153, 0.7), 0 0 28px rgba(236, 72, 153, 0.5); }
       }
-      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-      @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-      @keyframes slideInUp {
-         from { transform: translateY(30px); opacity: 0; }
-         to { transform: translateY(0); opacity: 1; }
+      @keyframes summarize-fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes summarize-fadeOut { from { opacity: 1; } to { opacity: 0; } }
+      @keyframes summarize-slideInUp {
+        from { transform: translateY(30px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
       }
 
-      /* --- Dark Mode Override --- */
+      /* --- Dark Mode --- */
       @media (prefers-color-scheme: dark) {
         #${OVERLAY_ID} {
-          background-color: rgba(20, 20, 20, 0.7);
+          background-color: rgba(0, 0, 0, 0.85) !important;
         }
+
         #${CONTENT_ID} {
-          background-color: #2c2c2c;
-          color: #e0e0e0;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+          background-color: #1a1a1a !important;
+          color: #e5e5e5 !important;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
         }
-        #${CLOSE_BUTTON_ID} { color: #888; }
-        #${CLOSE_BUTTON_ID}:hover { color: #eee; }
-        .retry-button { background-color: #555; color: #eee; }
-        .retry-button:hover { background-color: #666; }
-        #${DROPDOWN_ID} { background: #333; border-color: #555; }
-        .model-item { color: #ccc; }
-        .model-item:hover { background-color: #444; color: #fff; }
-        .group-header-container { background: #444; }
-        .group-header-text { color: #eee; }
-        .reset-key-link { color: #aaa; }
-        .reset-key-link:hover { color: #fff; }
-        .add-model-item { color: #999; }
-        .add-model-item:hover { background-color: #4a4a4a; color: #eee; }
-        hr { border-top-color: #555 !important; }
+
+        #${CONTENT_ID} p {
+          color: #e5e5e5 !important;
+        }
+
+        #${CONTENT_ID} p:first-of-type {
+          color: #ffffff !important;
+        }
+
+        #${CONTENT_ID} p:last-of-type {
+          border-top-color: rgba(255,255,255,0.1) !important;
+        }
+
+        #${CONTENT_ID} li {
+          color: #d4d4d4 !important;
+        }
+
+        #${CONTENT_ID} strong {
+          color: #ffffff !important;
+        }
+
+        #${CLOSE_BUTTON_ID} {
+          background: rgba(255,255,255,0.1) !important;
+          color: #999 !important;
+        }
+        #${CLOSE_BUTTON_ID}:hover {
+          background: rgba(255,255,255,0.15) !important;
+          color: #fff !important;
+        }
+
+        .retry-button {
+          background: linear-gradient(145deg, #2563eb, #0891b2) !important;
+        }
+
+        #${DROPDOWN_ID} {
+          background: #262626 !important;
+          border-color: #404040 !important;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+        }
+
+        #${DROPDOWN_ID} .model-item {
+          color: #d4d4d4 !important;
+        }
+        #${DROPDOWN_ID} .model-item:hover {
+          background-color: rgba(58, 123, 213, 0.2) !important;
+          color: #60a5fa !important;
+        }
+
+        #${DROPDOWN_ID} .group-header-container {
+          background: #333 !important;
+        }
+        #${DROPDOWN_ID} .group-header-text {
+          color: #f5f5f5 !important;
+        }
+
+        #${DROPDOWN_ID} .reset-key-link {
+          color: #888 !important;
+        }
+        #${DROPDOWN_ID} .reset-key-link:hover {
+          color: #60a5fa !important;
+        }
+
+        #${DROPDOWN_ID} .add-model-item {
+          color: #737373 !important;
+        }
+        #${DROPDOWN_ID} .add-model-item:hover {
+          background-color: #333 !important;
+          color: #a3a3a3 !important;
+        }
+
+        #${DROPDOWN_ID} hr {
+          border-top-color: #404040 !important;
+        }
+
+        /* Dark mode chat styles */
+        #summarize-chat-container {
+          border-top-color: rgba(96, 165, 250, 0.3) !important;
+        }
+
+        #summarize-chat-messages {
+          background: rgba(255,255,255,0.05) !important;
+        }
+
+        .chat-message.assistant {
+          background: rgba(255,255,255,0.1) !important;
+          color: #e5e5e5 !important;
+        }
+
+        #summarize-chat-input {
+          background: #262626 !important;
+          color: #e5e5e5 !important;
+          border-color: rgba(96, 165, 250, 0.3) !important;
+        }
+
+        #summarize-chat-input:focus {
+          border-color: #60a5fa !important;
+        }
+
+        #summarize-chat-input::placeholder {
+          color: #666 !important;
+        }
+
+        /* Dark scrollbar */
+        #${CONTENT_ID}::-webkit-scrollbar-thumb,
+        #${DROPDOWN_ID}::-webkit-scrollbar-thumb,
+        #summarize-chat-messages::-webkit-scrollbar-thumb {
+          background: rgba(255,255,255,0.2) !important;
+        }
+        #${CONTENT_ID}::-webkit-scrollbar-thumb:hover,
+        #${DROPDOWN_ID}::-webkit-scrollbar-thumb:hover,
+        #summarize-chat-messages::-webkit-scrollbar-thumb:hover {
+          background: rgba(255,255,255,0.3) !important;
+        }
+
+        /* Dark mode article quality colors - slightly brighter */
+        #${CONTENT_ID} span.article-excellent { color: #34d399 !important; }
+        #${CONTENT_ID} span.article-good { color: #60a5fa !important; }
+        #${CONTENT_ID} span.article-average { color: #fbbf24 !important; }
+        #${CONTENT_ID} span.article-bad { color: #f87171 !important; }
+        #${CONTENT_ID} span.article-very-bad { color: #ef4444 !important; }
       }
 
       /* --- Mobile Responsiveness --- */
       @media (max-width: 600px) {
-         #${CONTENT_ID} {
-            width: 100%; height: 100%;
-            max-width: none; max-height: none;
-            border-radius: 0; padding: 20px 15px;
-            box-shadow: none; animation: none; font-size: 15px;
-         }
-         #${CLOSE_BUTTON_ID} { top: 15px; right: 15px; font-size: 32px; }
-         #${OVERLAY_ID} ~ #${BUTTON_ID},
-         #${OVERLAY_ID} ~ #${DROPDOWN_ID} { display: none !important; }
+        #${OVERLAY_ID} {
+          padding: 0 !important;
+        }
+
+        #${CONTENT_ID} {
+          width: 100% !important;
+          height: 100% !important;
+          max-width: none !important;
+          max-height: none !important;
+          border-radius: 0 !important;
+          padding: 60px 20px 24px !important;
+          box-shadow: none !important;
+          animation: none !important;
+          font-size: 17px !important;
+        }
+
+        #${CONTENT_ID} p,
+        #${CONTENT_ID} li {
+          font-size: 16px !important;
+        }
+
+        #${CONTENT_ID} p:first-of-type {
+          font-size: 17px !important;
+        }
+
+        .summarize-header-buttons {
+          top: 12px !important;
+          right: 12px !important;
+        }
+
+        .summarize-header-btn {
+          width: 40px !important;
+          height: 40px !important;
+          font-size: 22px !important;
+        }
+
+        #summarize-chat-toggle {
+          font-size: 18px !important;
+        }
+
+        #summarize-chat-input-container {
+          flex-direction: column !important;
+        }
+
+        #summarize-chat-send {
+          width: 100% !important;
+        }
+
+        #${OVERLAY_ID} ~ #${BUTTON_ID},
+        #${OVERLAY_ID} ~ #${DROPDOWN_ID} {
+          display: none !important;
+        }
       }
     `)
   }
