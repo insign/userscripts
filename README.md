@@ -32,40 +32,20 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
   último modelo de IA selecionado (OpenAI ou Gemini) para gerar um resumo conciso do conteúdo. Pede a chave da API no
   primeiro uso de cada serviço ou se ela for apagada. O resumo é exibido em um overlay na língua do navegador. Permite
   adicionar modelos customizados.
-
-* **Novidades (v2025.07.17):**
-    * **Chat de Follow-up:** Novo botão 💬 ao lado do X permite continuar a conversa sobre o artigo. Faça perguntas de
-      acompanhamento e aprofunde-se no conteúdo como em um chat normal.
-    * **Modelos Gemini Atualizados:** Agora usa as versões "latest" dos modelos (gemini-pro-latest, gemini-flash-latest,
-      gemini-flash-lite-latest) para sempre ter acesso às versões mais recentes.
-    * **Tipografia para Leitura:** Interface redesenhada com fonte serifada (Georgia) otimizada para leitura confortável,
-      line-height de 1.75 e espaçamentos melhorados.
-    * **Dark Mode Aprimorado:** Detecta automaticamente o modo escuro do sistema/navegador e adapta todas as cores com
-      `!important` para garantir visualização correta em qualquer site.
-    * **Timeout Inteligente:** Modelos com "thinking" (Pro, o3, o4) agora têm timeout de 3 minutos para evitar erros de
-      timeout durante processamentos mais longos.
-    * **Prompt Melhorado:**
-        * O primeiro parágrafo agora responde diretamente a pergunta implícita no título do artigo (anti-clickbait)
-        * A opinião é mais direta e autoritativa, cética quando justificado, como um especialista dando seu parecer
-    * **CSS Isolado:** Usa `all: revert !important` para garantir que os estilos do overlay não sejam afetados por
-      estilos de sites externos.
-
-* **Recursos:**
-    * Avaliação da qualidade do artigo colorida (excelente, bom, médio, ruim, muito ruim)
-    * Adaptação automática ao dark mode do sistema
-    * Interface responsiva para mobile (tap-and-hold para selecionar modelo)
-    * Suporte a modelos customizados (OpenAI e Gemini)
-
+* **Novidades:**
+    * A avaliação da qualidade do artigo no resumo agora é colorida para melhor visualização (excelente, bom, médio,
+      ruim, muito ruim).
+    * O overlay do resumo adapta automaticamente suas cores (fundo e texto) se o sistema operacional/navegador estiver
+      configurado no modo escuro (dark mode).
 *   **Instalar:** [Greasy Fork](https://greasyfork.org/en/scripts/509192-summarize-with-ai)
-
 * **Uso:**
     * **Clique simples** no botão 'S' no canto inferior direito: Inicia a sumarização com o último modelo usado.
-    * **Long Press** (segurar por 0.5s) no botão 'S': Abre o menu para selecionar um modelo diferente.
-    * **Atalho `Alt+S`**: Inicia a sumarização com o último modelo usado.
-    * **Botão 💬 (Chat)**: Após o resumo, clique para abrir a área de chat e fazer perguntas sobre o artigo.
-    * **Resetar API Key**: No menu de modelos, clique em "Reset Key" ao lado do serviço (OpenAI/Gemini).
-    * **Erro na Sumarização**: Um botão "Try Again" aparecerá no overlay em caso de erro.
-
+    * **Duplo clique** ou **Long Press** (segurar por 0.5s) no botão 'S': Abre o menu para selecionar um modelo
+      diferente.
+    * **Atalho `Alt+S`**: Inicia a sumarização com o último modelo usado (equivalente ao clique simples).
+    * **Resetar API Key**: Dentro do menu de seleção de modelos, clique no link "Reset Key" ao lado do nome do serviço (
+      OpenAI/Gemini).
+    * **Erro na Sumarização**: Se ocorrer um erro durante a sumarização, um botão "Try Again" aparecerá no overlay.
 *   **Dependências:** Requer chaves de API válidas para OpenAI e/ou Google Gemini (AI Studio).
 
 ### Better LMArena (lmsys) Chat
