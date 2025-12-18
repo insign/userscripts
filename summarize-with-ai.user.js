@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.07.17.1430
+// @version      2025.12.17.2319
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -567,7 +567,7 @@
    */
   function hideElement(id) {
     const el = document.getElementById(id)
-    if (el) el.style.display = 'none'
+    if (el) el.style.setProperty('display', 'none', 'important')
   }
 
   /**
@@ -577,7 +577,8 @@
   function showElement(id) {
     const el = document.getElementById(id)
     if (el) {
-      el.style.display = (id === BUTTON_ID) ? 'flex' : 'block'
+      const displayValue = (id === BUTTON_ID) ? 'flex' : 'block'
+      el.style.setProperty('display', displayValue, 'important')
     }
   }
 
