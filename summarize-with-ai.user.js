@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.12.17.2319
+// @version      2025.12.24.0100
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -453,7 +453,7 @@
     return `<div id="${CHAT_CONTAINER_ID}">
       <div id="${CHAT_MESSAGES_ID}"></div>
       <div id="summarize-chat-input-container">
-        <input type="text" id="${CHAT_INPUT_ID}" placeholder="Ask a follow-up question about this article..." />
+        <input type="text" id="${CHAT_INPUT_ID}" placeholder="Follow up with this article..." />
         <button type="button" id="${CHAT_SEND_ID}">Send</button>
       </div>
     </div>`
@@ -610,15 +610,13 @@
   }
 
   /**
-   * Toggles the chat interface visibility.
+   * Scrolls to and focuses the chat input.
    */
   function toggleChat() {
-    const chatContainer = document.getElementById(CHAT_CONTAINER_ID)
-    if (chatContainer) {
-      chatContainer.classList.toggle('active')
-      if (chatContainer.classList.contains('active')) {
-        document.getElementById(CHAT_INPUT_ID)?.focus()
-      }
+    const chatInput = document.getElementById(CHAT_INPUT_ID)
+    if (chatInput) {
+      chatInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      chatInput.focus()
     }
   }
 
@@ -1546,14 +1544,10 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
 
       /* --- Chat Container (inline, no separate scroll) --- */
       #${CONTENT_ID} #summarize-chat-container {
-        display: none !important;
+        display: block !important;
         margin-top: 28px !important;
         padding-top: 24px !important;
         border-top: 2px solid rgba(58, 123, 213, 0.15) !important;
-      }
-
-      #${CONTENT_ID} #summarize-chat-container.active {
-        display: block !important;
       }
 
       /* --- Chat Messages (no separate scroll, flows with content) --- */
@@ -1800,7 +1794,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
           max-height: none !important;
           height: 100% !important;
           border-radius: 0 !important;
-          padding: 20px !important;
+          padding: 20px 20px 120px 20px !important;
         }
 
         #${CONTENT_ID} .summarize-header-buttons {
