@@ -33,11 +33,14 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
   primeiro uso de cada serviço ou se ela for apagada. O resumo é exibido em um overlay na língua do navegador. Permite
   adicionar modelos customizados.
 
+* **Novidades (v2026.07.28):**
+    * **Modelos Gemini Nativos:** Suporte a Gemini 3.6 Flash (`gemini-3.6-flash`) e Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`).
+    * **Thinking nos Modelos Gemini:** Os novos modelos usam `thinkingLevel`, compatível com Gemini 3.x: `minimal` no Flash-Lite e `low` no Flash.
+    * **Respostas Multipartes:** Suporte a respostas Gemini compostas por múltiplas partes, sem exibir as partes de pensamento.
+
 * **Novidades (v2025.07.17):**
     * **Chat de Follow-up:** Novo botão 💬 ao lado do X permite continuar a conversa sobre o artigo. Faça perguntas de
       acompanhamento e aprofunde-se no conteúdo como em um chat normal.
-    * **Modelos Gemini Atualizados:** Agora usa as versões "latest" dos modelos (gemini-pro-latest, gemini-flash-latest,
-      gemini-flash-lite-latest) para sempre ter acesso às versões mais recentes.
     * **Tipografia para Leitura:** Interface redesenhada com fonte serifada (Georgia) otimizada para leitura confortável,
       line-height de 1.75 e espaçamentos melhorados.
     * **Dark Mode Aprimorado:** Detecta automaticamente o modo escuro do sistema/navegador e adapta todas as cores com

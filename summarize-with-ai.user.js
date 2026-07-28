@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2025.12.24.0100
+// @version      2026.07.28.1638
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -40,6 +40,11 @@
   // GM Storage Key for custom models
   const CUSTOM_MODELS_KEY = 'custom_ai_models'
 
+  const MODEL_ID_MIGRATIONS = {
+    'gemini-flash-lite-latest': 'gemini-3.5-flash-lite',
+    'gemini-flash-latest'     : 'gemini-3.6-flash',
+  }
+
   // Token Limits
   const DEFAULT_MAX_TOKENS  = 1000
   const HIGH_MAX_TOKENS     = 1500
@@ -68,14 +73,14 @@
       baseUrl      : 'https://generativelanguage.googleapis.com/v1beta/models/',
       models       : [
         {
-          id    : 'gemini-flash-lite-latest',
-          name  : 'Gemini Flash Lite (faster)',
-          params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingBudget: 0 } } // Thinking explicitly disabled
+          id    : 'gemini-3.5-flash-lite',
+          name  : 'Gemini 3.5 Flash-Lite (faster)',
+          params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingLevel: 'minimal' } }
         },
         {
-          id    : 'gemini-flash-latest',
-          name  : 'Gemini Flash',
-          params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingBudget: 0 } } // Thinking explicitly disabled
+          id    : 'gemini-3.6-flash',
+          name  : 'Gemini 3.6 Flash',
+          params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingLevel: 'low' } }
         },
         {
           id    : 'gemini-pro-latest',
@@ -135,7 +140,7 @@
 		Article Content: ${content}`
 
   // --- State Variables ---
-  let activeModel     = 'gemini-flash-lite-latest'
+  let activeModel     = 'gemini-3.5-flash-lite'
   let articleData     = null
   let customModels    = [] // Stores {id, service, supportsThinking?: boolean}
   let longPressTimer  = null
@@ -154,10 +159,14 @@
     document.addEventListener('keydown', handleKeyPress)
     articleData = getArticleData()
     if (articleData) {
+      const savedModel = await GM.getValue('last_used_model', activeModel)
+      activeModel      = MODEL_ID_MIGRATIONS[savedModel] || savedModel
+      if (activeModel !== savedModel) {
+        await GM.setValue('last_used_model', activeModel)
+      }
       addSummarizeButton()
       showElement(BUTTON_ID)
       setupFocusListeners()
-      activeModel = await GM.getValue('last_used_model', activeModel)
     }
   }
 
@@ -819,6 +828,19 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
   }
 
   /**
+   * Extracts visible text from a Gemini candidate.
+   * @param {object} candidate
+   * @returns {string}
+   */
+  function getGeminiResponseText(candidate) {
+    return candidate?.content?.parts
+      ?.filter(part => typeof part.text === 'string' && part.thought !== true)
+      .map(part => part.text)
+      .join('')
+      .trim() || ''
+  }
+
+  /**
    * Parses chat response from API.
    * @param {object} response
    * @param {string} service
@@ -830,10 +852,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
     }
     else {
       const candidate = response.data?.candidates?.[0]
-      if (candidate?.content?.parts?.length > 0) {
-        return candidate.content.parts[0].text || 'No response received'
-      }
-      return 'No response received'
+      return getGeminiResponseText(candidate) || 'No response received'
     }
   }
 
@@ -844,9 +863,11 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
    */
   function getRequestTimeout(modelConfig) {
     // Check if model has thinking enabled
-    const hasThinking = modelConfig.params && !modelConfig.params.thinkingConfig
-    const isProModel  = modelConfig.id.toLowerCase().includes('pro')
-    const isO3orO4    = /^o[34]/i.test(modelConfig.id)
+    const thinkingConfig   = modelConfig.params?.thinkingConfig
+    const usesThinkingLevel = Boolean(thinkingConfig?.thinkingLevel)
+    const hasThinking       = Boolean(modelConfig.params) && (!thinkingConfig || usesThinkingLevel || thinkingConfig.thinkingBudget !== 0)
+    const isProModel        = modelConfig.id.toLowerCase().includes('pro')
+    const isO3orO4          = /^o[34]/i.test(modelConfig.id)
 
     // Custom models with thinking support
     const customWithThinking = modelConfig.isCustom && modelConfig.supportsThinking === true
@@ -1011,10 +1032,9 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         console.warn('Summarize with AI: Summary may be incomplete because the max token limit was reached.')
       }
 
-      if (candidate?.content?.parts?.length > 0 && candidate.content.parts[0].text) {
-        rawSummary = candidate.content.parts[0].text
-      }
-      else if (finishReason && ![ 'STOP', 'SAFETY', 'MAX_TOKENS' ].includes(finishReason)) {
+      rawSummary = getGeminiResponseText(candidate)
+
+      if (!rawSummary && finishReason && ![ 'STOP', 'SAFETY', 'MAX_TOKENS' ].includes(finishReason)) {
         console.warn(`Summarize with AI: Gemini response structure missing expected text content or unusual finish reason: ${finishReason}`, candidate)
       }
       else if (!rawSummary && !data?.error) {
@@ -1204,7 +1224,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
       await GM.setValue(CUSTOM_MODELS_KEY, JSON.stringify(customModels))
 
       if (activeModel === modelId) {
-        activeModel = 'gemini-flash-lite-latest'
+        activeModel = 'gemini-3.5-flash-lite'
         await GM.setValue('last_used_model', activeModel)
       }
 
