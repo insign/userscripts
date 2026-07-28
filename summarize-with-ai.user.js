@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2026.07.28.1638
+// @version      2026.07.28.1703
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -28,7 +28,7 @@
   const OVERLAY_ID           = 'summarize-overlay'
   const CLOSE_BUTTON_ID      = 'summarize-close'
   const CONTENT_ID           = 'summarize-content'
-  const ERROR_ID             = 'summarize-error'
+  const NOTIFICATION_ID      = 'summarize-notification'
   const ADD_MODEL_ITEM_ID    = 'add-custom-model'
   const RETRY_BUTTON_ID      = 'summarize-retry-button'
   const CHAT_TOGGLE_ID       = 'summarize-chat-toggle'
@@ -36,6 +36,11 @@
   const CHAT_MESSAGES_ID     = 'summarize-chat-messages'
   const CHAT_INPUT_ID        = 'summarize-chat-input'
   const CHAT_SEND_ID         = 'summarize-chat-send'
+  const SHARE_ALL_BUTTON_ID  = 'summarize-share-all'
+
+  const SHARE_ICON_HTML = `<svg viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="currentColor" d="M18 16a3 3 0 0 0-2.39 1.19L8.91 13.8a3.1 3.1 0 0 0 0-1.6l6.7-3.39A3 3 0 1 0 15 7a3.1 3.1 0 0 0 .09.73l-6.7 3.39a3 3 0 1 0 0 3.76l6.7 3.39A3 3 0 1 0 18 16Z"/>
+  </svg>`
 
   // GM Storage Key for custom models
   const CUSTOM_MODELS_KEY = 'custom_ai_models'
@@ -187,7 +192,7 @@
       const reader  = new Readability(docClone)
       const article = reader.parse()
       return (article?.content && article.textContent?.trim())
-        ? { title: article.title, content: article.textContent.trim() }
+        ? { title: article.title, content: article.textContent.trim(), url: window.location.href }
         : null
     }
     catch (error) {
@@ -440,16 +445,20 @@
   }
 
   /**
-   * Builds the header buttons HTML (chat toggle + close).
-   * @param {boolean} showChat - Whether to show the chat button.
+   * Builds the header buttons HTML.
+   * @param {boolean} showActions - Whether to show the chat and share buttons.
    * @returns {string}
    */
-  function buildHeaderButtonsHTML(showChat = false) {
-    const chatBtn = showChat
+  function buildHeaderButtonsHTML(showActions = false) {
+    const chatBtn = showActions
       ? `<button type="button" id="${CHAT_TOGGLE_ID}" class="summarize-header-btn summarize-chat-btn" title="Continue conversation">💬</button>`
+      : ''
+    const shareBtn = showActions
+      ? `<button type="button" id="${SHARE_ALL_BUTTON_ID}" class="summarize-header-btn summarize-share-btn" title="Share full summary" aria-label="Share full summary">${SHARE_ICON_HTML}</button>`
       : ''
     return `<div class="summarize-header-buttons">
       ${chatBtn}
+      ${shareBtn}
       <button type="button" id="${CLOSE_BUTTON_ID}" class="summarize-header-btn summarize-close-btn" title="Close (Esc)">✕</button>
     </div>`
   }
@@ -508,6 +517,7 @@
     // Setup chat if available
     if (showChatButton) {
       setupChatListeners()
+      setupShareListeners()
     }
   }
 
@@ -551,23 +561,153 @@
       // Setup chat if available
       if (showChatButton) {
         setupChatListeners()
+        setupShareListeners()
       }
     }
   }
 
   /**
-   * Shows a temporary error notification.
+   * Shows a temporary notification.
    * @param {string} message
+   * @param {'error'|'success'} [type='error']
    */
-  function showErrorNotification(message) {
-    document.getElementById(ERROR_ID)?.remove()
+  function showNotification(message, type = 'error') {
+    document.getElementById(NOTIFICATION_ID)?.remove()
 
-    const errorDiv     = document.createElement('div')
-    errorDiv.id        = ERROR_ID
-    errorDiv.innerText = message
-    document.body.appendChild(errorDiv)
+    const notification     = document.createElement('div')
+    notification.id        = NOTIFICATION_ID
+    notification.className = `summarize-notification-${type}`
+    notification.innerText = message
+    notification.setAttribute('role', type === 'error' ? 'alert' : 'status')
+    notification.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite')
+    notification.setAttribute('aria-atomic', 'true')
+    document.body.appendChild(notification)
 
-    setTimeout(() => errorDiv.remove(), 4000)
+    setTimeout(() => notification.remove(), 4000)
+  }
+
+  /**
+   * Copies text to the clipboard, including a fallback for restricted pages.
+   * @param {string} text
+   */
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text)
+        return
+      }
+      catch (error) {
+        console.warn('Summarize with AI: Clipboard API failed, trying fallback:', error)
+      }
+    }
+
+    const activeElement = document.activeElement
+    const textarea      = document.createElement('textarea')
+    textarea.value      = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity  = '0'
+    document.body.appendChild(textarea)
+
+    let copied = false
+    try {
+      textarea.focus()
+      textarea.select()
+      copied = document.execCommand('copy')
+    }
+    finally {
+      textarea.remove()
+      activeElement?.focus?.()
+    }
+
+    if (!copied) {
+      throw new Error('Clipboard copy was rejected')
+    }
+  }
+
+  /**
+   * Opens the native share sheet or copies the text when sharing is unavailable.
+   * @param {string} text
+   */
+  async function shareSummaryText(text) {
+    const normalizedText = text.trim()
+    if (!normalizedText) {
+      showNotification('Nothing to share.')
+      return
+    }
+
+    const originalUrl = articleData?.url || window.location.href
+    const shareText   = `${normalizedText}\n\n${originalUrl}`
+
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({
+          title: articleData?.title || document.title,
+          text : shareText,
+        })
+        showNotification('Shared successfully.', 'success')
+        return
+      }
+      catch (error) {
+        if (error?.name === 'AbortError') return
+        console.warn('Summarize with AI: Native sharing failed, copying instead:', error)
+      }
+    }
+
+    try {
+      await copyTextToClipboard(shareText)
+      showNotification('Sharing unavailable. Text copied to clipboard.', 'success')
+    }
+    catch (error) {
+      console.error('Summarize with AI: Failed to share or copy text:', error)
+      showNotification('Could not share or copy this text.')
+    }
+  }
+
+  /**
+   * Adds a share button to a summary paragraph.
+   * @param {HTMLElement|null} paragraph
+   * @param {string} label
+   */
+  function addInlineShareButton(paragraph, label) {
+    if (!paragraph || paragraph.querySelector('.summarize-inline-share-btn')) return
+
+    const button     = document.createElement('button')
+    button.type      = 'button'
+    button.className = 'summarize-inline-share-btn'
+    button.title     = label
+    button.setAttribute('aria-label', label)
+    button.innerHTML = SHARE_ICON_HTML
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      shareSummaryText(paragraph.innerText)
+    })
+    paragraph.appendChild(button)
+  }
+
+  /**
+   * Adds sharing actions to the rendered summary.
+   */
+  function setupShareListeners() {
+    const summaryBody = document.querySelector(`#${CONTENT_ID} .summarize-body`)
+    if (!summaryBody) return
+
+    const paragraphs                = Array.from(summaryBody.querySelectorAll('p')).filter(paragraph => paragraph.textContent.trim())
+    const isArticleQualityParagraph = paragraph =>
+      paragraph?.matches('[class*="article-"]') || paragraph?.querySelector('[class*="article-"]')
+    const summaryParagraph          = paragraphs.find(paragraph => !isArticleQualityParagraph(paragraph))
+    const adjacentOpinion           = summaryBody.querySelector('ul + p')
+    const opinionParagraph          = adjacentOpinion?.textContent.trim() ? adjacentOpinion : paragraphs[paragraphs.length - 1]
+
+    addInlineShareButton(summaryParagraph, 'Share summary paragraph')
+    if (opinionParagraph !== summaryParagraph && !isArticleQualityParagraph(opinionParagraph)) {
+      addInlineShareButton(opinionParagraph, 'Share opinion paragraph')
+    }
+
+    document.getElementById(SHARE_ALL_BUTTON_ID)?.addEventListener('click', (event) => {
+      event.stopPropagation()
+      shareSummaryText(summaryBody.innerText)
+    })
   }
 
   /**
@@ -909,13 +1049,13 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
   async function processSummarization() {
     try {
       if (!articleData) {
-        showErrorNotification('Article content not found or not readable.')
+        showNotification('Article content not found or not readable.')
         return
       }
 
       const modelConfig = getActiveModelConfig()
       if (!modelConfig) {
-        showErrorNotification(`Configuration for model "${activeModel}" not found. Please select another model.`)
+        showNotification(`Configuration for model "${activeModel}" not found. Please select another model.`)
         return
       }
 
@@ -929,7 +1069,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
           updateSummaryOverlay(`<p style="color: red;">${errorMsg}</p>`, false)
         }
         else {
-          showErrorNotification(errorMsg)
+          showNotification(errorMsg)
         }
         return
       }
@@ -1510,6 +1650,22 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         box-shadow: 0 2px 8px rgba(58, 123, 213, 0.4) !important;
       }
 
+      #${CONTENT_ID} .summarize-share-btn {
+        background: #e8f1ff !important;
+        color: #2563eb !important;
+      }
+      #${CONTENT_ID} .summarize-share-btn:hover {
+        background: #dbeafe !important;
+        transform: scale(1.1) !important;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25) !important;
+      }
+      #${CONTENT_ID} .summarize-share-btn svg,
+      #${CONTENT_ID} .summarize-inline-share-btn svg {
+        width: 16px !important;
+        height: 16px !important;
+        pointer-events: none !important;
+      }
+
       /* --- Summary Body --- */
       #${CONTENT_ID} .summarize-body {
         clear: right !important;
@@ -1521,6 +1677,32 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         font-size: 18px !important;
         line-height: 1.75 !important;
         color: #2d2d2d !important;
+      }
+
+      #${CONTENT_ID} .summarize-inline-share-btn {
+        all: initial !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 26px !important;
+        height: 26px !important;
+        margin-left: 8px !important;
+        border-radius: 50% !important;
+        background: rgba(37, 99, 235, 0.1) !important;
+        color: #2563eb !important;
+        cursor: pointer !important;
+        vertical-align: -6px !important;
+        transition: all 0.15s ease !important;
+        box-sizing: border-box !important;
+      }
+      #${CONTENT_ID} .summarize-inline-share-btn:hover {
+        background: rgba(37, 99, 235, 0.2) !important;
+        transform: scale(1.08) !important;
+      }
+      #${CONTENT_ID} .summarize-share-btn:focus-visible,
+      #${CONTENT_ID} .summarize-inline-share-btn:focus-visible {
+        outline: 2px solid #2563eb !important;
+        outline-offset: 2px !important;
       }
 
       #${CONTENT_ID} .summarize-body ul {
@@ -1684,7 +1866,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
       }
 
       /* --- Error Notification --- */
-      #${ERROR_ID} {
+      #${NOTIFICATION_ID} {
         all: initial !important;
         position: fixed !important;
         bottom: 20px !important;
@@ -1700,6 +1882,11 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4) !important;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
         box-sizing: border-box !important;
+      }
+
+      #${NOTIFICATION_ID}.summarize-notification-success {
+        background-color: #059669 !important;
+        box-shadow: 0 4px 20px rgba(5, 150, 105, 0.4) !important;
       }
 
       /* --- Scrollbar Styling --- */
@@ -1755,6 +1942,16 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         #${CONTENT_ID} .summarize-close-btn:hover {
           background: #4a4a4c !important;
           color: #fff !important;
+        }
+
+        #${CONTENT_ID} .summarize-share-btn,
+        #${CONTENT_ID} .summarize-inline-share-btn {
+          background: rgba(96, 165, 250, 0.16) !important;
+          color: #60a5fa !important;
+        }
+        #${CONTENT_ID} .summarize-share-btn:hover,
+        #${CONTENT_ID} .summarize-inline-share-btn:hover {
+          background: rgba(96, 165, 250, 0.28) !important;
         }
 
         #${CONTENT_ID} .chat-message.assistant {
@@ -1830,6 +2027,12 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         #${CONTENT_ID} .summarize-body p,
         #${CONTENT_ID} .summarize-body li {
           font-size: 16px !important;
+        }
+
+        #${CONTENT_ID} .summarize-inline-share-btn {
+          width: 30px !important;
+          height: 30px !important;
+          vertical-align: -8px !important;
         }
 
         #${CONTENT_ID} #summarize-chat-input-container {

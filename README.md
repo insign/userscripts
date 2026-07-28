@@ -37,6 +37,7 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
     * **Modelos Gemini Nativos:** Suporte a Gemini 3.6 Flash (`gemini-3.6-flash`) e Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`).
     * **Thinking nos Modelos Gemini:** Os novos modelos usam `thinkingLevel`, compatível com Gemini 3.x: `minimal` no Flash-Lite e `low` no Flash.
     * **Respostas Multipartes:** Suporte a respostas Gemini compostas por múltiplas partes, sem exibir as partes de pensamento.
+    * **Compartilhamento:** Três botões compartilham o primeiro parágrafo do resumo, a opinião ou o resumo completo; todos incluem a URL original e usam a cópia para a área de transferência como fallback quando o compartilhamento nativo não está disponível.
 
 * **Novidades (v2025.07.17):**
     * **Chat de Follow-up:** Novo botão 💬 ao lado do X permite continuar a conversa sobre o artigo. Faça perguntas de
