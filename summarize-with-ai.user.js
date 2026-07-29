@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2026.07.28.1703
+// @version      2026.07.29.0453
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -37,6 +37,7 @@
   const CHAT_INPUT_ID        = 'summarize-chat-input'
   const CHAT_SEND_ID         = 'summarize-chat-send'
   const SHARE_ALL_BUTTON_ID  = 'summarize-share-all'
+  const MANUAL_COPY_ID       = 'summarize-manual-copy'
 
   const SHARE_ICON_HTML = `<svg viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M18 16a3 3 0 0 0-2.39 1.19L8.91 13.8a3.1 3.1 0 0 0 0-1.6l6.7-3.39A3 3 0 1 0 15 7a3.1 3.1 0 0 0 .09.73l-6.7 3.39a3 3 0 1 0 0 3.76l6.7 3.39A3 3 0 1 0 18 16Z"/>
@@ -153,6 +154,7 @@
   let modelPressTimer = null
   let chatHistory     = [] // Stores conversation history for chat feature
   let lastSummary     = '' // Stores the last generated summary for chat context
+  let closeManualCopyDialog = null
 
   // --- Main Functions ---
 
@@ -530,6 +532,7 @@
       overlay.remove()
       document.body.style.overflow = ''
     }
+    closeManualCopyDialog?.()
   }
 
   /**
@@ -605,6 +608,7 @@
     const textarea      = document.createElement('textarea')
     textarea.value      = text
     textarea.setAttribute('readonly', '')
+    textarea.dataset.summarizeClipboardTarget = 'true'
     textarea.style.position = 'fixed'
     textarea.style.opacity  = '0'
     document.body.appendChild(textarea)
@@ -623,6 +627,115 @@
     if (!copied) {
       throw new Error('Clipboard copy was rejected')
     }
+  }
+
+  /**
+   * Shows a selectable fallback when automatic sharing and copying are blocked.
+   * @param {string} text
+   */
+  function showManualCopyDialog(text) {
+    closeManualCopyDialog?.()
+
+    const previouslyFocused = document.activeElement
+    const dialog            = document.createElement('div')
+    dialog.id               = MANUAL_COPY_ID
+    dialog.innerHTML        = `<div class="summarize-manual-copy-panel" role="dialog" aria-modal="true" aria-labelledby="summarize-manual-copy-title">
+      <h2 id="summarize-manual-copy-title">Copy manually</h2>
+      <p>Automatic sharing and copying were blocked. Copy the text below.</p>
+      <textarea readonly aria-label="Text to copy"></textarea>
+      <div class="summarize-manual-copy-actions">
+        <button type="button" class="summarize-manual-copy-submit">Copy text</button>
+        <button type="button" class="summarize-manual-copy-close">Close</button>
+      </div>
+    </div>`
+
+    const textarea   = dialog.querySelector('textarea')
+    const copyButton = dialog.querySelector('.summarize-manual-copy-submit')
+    const closeButton = dialog.querySelector('.summarize-manual-copy-close')
+    textarea.value = text
+
+    let closed = false
+    const closeDialog = () => {
+      if (closed) return
+      closed = true
+      const wasConnected = dialog.isConnected
+      document.removeEventListener('focusin', keepDialogFocus)
+      dialog.remove()
+      if (closeManualCopyDialog === closeDialog) closeManualCopyDialog = null
+      if (wasConnected && previouslyFocused?.isConnected) previouslyFocused.focus()
+    }
+    const selectText  = () => {
+      textarea.focus()
+      textarea.select()
+      textarea.setSelectionRange(0, textarea.value.length)
+    }
+    let redirectingFocus = false
+    const keepDialogFocus = event => {
+      if (!dialog.isConnected) {
+        closeDialog()
+        return
+      }
+      if (redirectingFocus || dialog.contains(event.target) || event.target?.dataset?.summarizeClipboardTarget) return
+
+      redirectingFocus = true
+      try {
+        selectText()
+      }
+      finally {
+        redirectingFocus = false
+      }
+    }
+
+    closeManualCopyDialog = closeDialog
+    document.addEventListener('focusin', keepDialogFocus)
+
+    copyButton.addEventListener('click', async () => {
+      try {
+        await copyTextToClipboard(text)
+        if (!dialog.isConnected) return
+        closeDialog()
+        showNotification('Text copied to clipboard.', 'success')
+      }
+      catch (error) {
+        if (!dialog.isConnected) return
+        console.error('Summarize with AI: Manual copy retry failed:', error)
+        selectText()
+        showNotification('Select the text and copy it manually.')
+      }
+    })
+    closeButton.addEventListener('click', closeDialog)
+
+    let pressedBackdrop = false
+    dialog.addEventListener('pointerdown', event => {
+      pressedBackdrop = event.target === dialog
+    })
+    dialog.addEventListener('click', event => {
+      if (pressedBackdrop && event.target === dialog) closeDialog()
+      pressedBackdrop = false
+    })
+    dialog.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeDialog()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const firstFocusable = textarea
+      const lastFocusable  = closeButton
+      if (event.shiftKey && document.activeElement === firstFocusable) {
+        event.preventDefault()
+        lastFocusable.focus()
+      }
+      else if (!event.shiftKey && document.activeElement === lastFocusable) {
+        event.preventDefault()
+        firstFocusable.focus()
+      }
+    })
+
+    document.body.appendChild(dialog)
+    selectText()
   }
 
   /**
@@ -660,7 +773,7 @@
     }
     catch (error) {
       console.error('Summarize with AI: Failed to share or copy text:', error)
-      showNotification('Could not share or copy this text.')
+      showManualCopyDialog(shareText)
     }
   }
 
@@ -693,11 +806,18 @@
     if (!summaryBody) return
 
     const paragraphs                = Array.from(summaryBody.querySelectorAll('p')).filter(paragraph => paragraph.textContent.trim())
+    const qualityScorePattern       = /\b(?:10|[1-9])\s*\/\s*10\b(?!\s*\/)/
+    const firstParagraph            = paragraphs[0]
     const isArticleQualityParagraph = paragraph =>
-      paragraph?.matches('[class*="article-"]') || paragraph?.querySelector('[class*="article-"]')
+      paragraph?.matches('[class*="article-"]') ||
+      paragraph?.querySelector('[class*="article-"]') ||
+      (paragraph === firstParagraph &&
+        paragraph?.querySelector('strong') &&
+        qualityScorePattern.test(paragraph.querySelector('span')?.textContent || ''))
     const summaryParagraph          = paragraphs.find(paragraph => !isArticleQualityParagraph(paragraph))
-    const adjacentOpinion           = summaryBody.querySelector('ul + p')
-    const opinionParagraph          = adjacentOpinion?.textContent.trim() ? adjacentOpinion : paragraphs[paragraphs.length - 1]
+    const adjacentOpinions          = Array.from(summaryBody.querySelectorAll('ul + p')).filter(paragraph => paragraph.textContent.trim())
+    const adjacentOpinion           = adjacentOpinions[adjacentOpinions.length - 1]
+    const opinionParagraph          = adjacentOpinion ?? paragraphs[paragraphs.length - 1]
 
     addInlineShareButton(summaryParagraph, 'Share summary paragraph')
     if (opinionParagraph !== summaryParagraph && !isArticleQualityParagraph(opinionParagraph)) {
@@ -1421,6 +1541,13 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
       }
     }
     if (e.key === 'Escape') {
+      if (closeManualCopyDialog && document.getElementById(MANUAL_COPY_ID)) {
+        e.preventDefault()
+        closeManualCopyDialog()
+        return
+      }
+      closeManualCopyDialog?.()
+
       if (document.getElementById(OVERLAY_ID)) {
         e.preventDefault()
         closeOverlay()
@@ -1865,6 +1992,115 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         box-shadow: 0 4px 12px rgba(58, 123, 213, 0.4) !important;
       }
 
+      /* --- Manual Copy Fallback --- */
+      #${MANUAL_COPY_ID} {
+        all: initial !important;
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 2147483646 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 20px !important;
+        background: rgba(0, 0, 0, 0.72) !important;
+        box-sizing: border-box !important;
+      }
+
+      #${MANUAL_COPY_ID} * {
+        box-sizing: border-box !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      }
+
+      #${MANUAL_COPY_ID} .summarize-manual-copy-panel {
+        all: initial !important;
+        display: block !important;
+        width: min(640px, 100%) !important;
+        max-height: calc(100vh - 40px) !important;
+        padding: 24px !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain !important;
+        border-radius: 14px !important;
+        background: #ffffff !important;
+        color: #222222 !important;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
+        box-sizing: border-box !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      }
+
+      #${MANUAL_COPY_ID} h2 {
+        all: initial !important;
+        display: block !important;
+        margin: 0 0 8px !important;
+        color: #1f2937 !important;
+        font: 700 20px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      }
+
+      #${MANUAL_COPY_ID} p {
+        all: initial !important;
+        display: block !important;
+        margin: 0 0 16px !important;
+        color: #4b5563 !important;
+        font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      }
+
+      #${MANUAL_COPY_ID} textarea {
+        all: initial !important;
+        display: block !important;
+        width: 100% !important;
+        min-height: 180px !important;
+        max-height: 50vh !important;
+        padding: 12px !important;
+        overflow: auto !important;
+        resize: vertical !important;
+        border: 1px solid #d1d5db !important;
+        border-radius: 8px !important;
+        background: #f9fafb !important;
+        color: #111827 !important;
+        white-space: pre-wrap !important;
+        font: 400 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+        box-sizing: border-box !important;
+      }
+
+      #${MANUAL_COPY_ID} .summarize-manual-copy-actions {
+        display: flex !important;
+        justify-content: flex-end !important;
+        gap: 10px !important;
+        margin-top: 16px !important;
+      }
+
+      #${MANUAL_COPY_ID} button {
+        all: initial !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-height: 40px !important;
+        padding: 9px 16px !important;
+        border-radius: 8px !important;
+        cursor: pointer !important;
+        font: 600 14px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        box-sizing: border-box !important;
+      }
+
+      #${MANUAL_COPY_ID} .summarize-manual-copy-submit {
+        background: #2563eb !important;
+        color: #ffffff !important;
+      }
+
+      #${MANUAL_COPY_ID} .summarize-manual-copy-close {
+        background: #e5e7eb !important;
+        color: #374151 !important;
+      }
+
+      #${MANUAL_COPY_ID} button:hover {
+        filter: brightness(0.94) !important;
+      }
+
+      #${MANUAL_COPY_ID} textarea:focus-visible,
+      #${MANUAL_COPY_ID} button:focus-visible {
+        outline: 3px solid rgba(37, 99, 235, 0.4) !important;
+        outline-offset: 2px !important;
+      }
+
       /* --- Error Notification --- */
       #${NOTIFICATION_ID} {
         all: initial !important;
@@ -1876,7 +2112,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         color: white !important;
         padding: 14px 24px !important;
         border-radius: 10px !important;
-        z-index: 2147483646 !important;
+        z-index: 2147483647 !important;
         font-size: 14px !important;
         font-weight: 500 !important;
         box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4) !important;
@@ -1998,6 +2234,22 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         #${CONTENT_ID} span.article-average { color: #fbbf24 !important; }
         #${CONTENT_ID} span.article-bad { color: #f87171 !important; }
         #${CONTENT_ID} span.article-very-bad { color: #ef4444 !important; }
+
+        #${MANUAL_COPY_ID} .summarize-manual-copy-panel {
+          background: #1c1c1e !important;
+          color: #e5e5e5 !important;
+        }
+        #${MANUAL_COPY_ID} h2 { color: #ffffff !important; }
+        #${MANUAL_COPY_ID} p { color: #d1d5db !important; }
+        #${MANUAL_COPY_ID} textarea {
+          background: #2c2c2e !important;
+          border-color: #4b5563 !important;
+          color: #f3f4f6 !important;
+        }
+        #${MANUAL_COPY_ID} .summarize-manual-copy-close {
+          background: #3a3a3c !important;
+          color: #e5e5e5 !important;
+        }
       }
 
       /* --- Mobile Responsiveness --- */
@@ -2033,6 +2285,28 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
           width: 30px !important;
           height: 30px !important;
           vertical-align: -8px !important;
+        }
+
+        #${MANUAL_COPY_ID} {
+          padding: 12px !important;
+        }
+
+        #${MANUAL_COPY_ID} .summarize-manual-copy-panel {
+          max-height: calc(100vh - 24px) !important;
+          padding: 18px !important;
+        }
+
+        #${MANUAL_COPY_ID} textarea {
+          min-height: 120px !important;
+          max-height: 35vh !important;
+        }
+
+        #${MANUAL_COPY_ID} .summarize-manual-copy-actions {
+          flex-direction: column !important;
+        }
+
+        #${MANUAL_COPY_ID} button {
+          width: 100% !important;
         }
 
         #${CONTENT_ID} #summarize-chat-input-container {
