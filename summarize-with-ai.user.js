@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2026.07.29.0453
+// @version      2026.07.31.1850
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -38,6 +38,7 @@
   const CHAT_SEND_ID         = 'summarize-chat-send'
   const SHARE_ALL_BUTTON_ID  = 'summarize-share-all'
   const MANUAL_COPY_ID       = 'summarize-manual-copy'
+  const SCROLL_HIDDEN_CLASS  = 'summarize-scroll-hidden'
 
   const SHARE_ICON_HTML = `<svg viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M18 16a3 3 0 0 0-2.39 1.19L8.91 13.8a3.1 3.1 0 0 0 0-1.6l6.7-3.39A3 3 0 1 0 15 7a3.1 3.1 0 0 0 .09.73l-6.7 3.39a3 3 0 1 0 0 3.76l6.7 3.39A3 3 0 1 0 18 16Z"/>
@@ -56,6 +57,9 @@
   const HIGH_MAX_TOKENS     = 1500
   // Long press duration (ms)
   const LONG_PRESS_DURATION = 500
+  // Scroll behaviour for the floating button
+  const SCROLL_HIDE_DELTA   = 8   // Minimum scroll movement (px) before toggling the button
+  const SCROLL_HIDE_MIN_TOP = 60  // Keep the button visible near the top of the page
   // Request timeouts (ms)
   const DEFAULT_TIMEOUT     = 60000   // 60 seconds for non-thinking models
   const THINKING_TIMEOUT    = 300000  // 300 seconds (5 min) for thinking models (Pro, o3, o4)
@@ -155,6 +159,9 @@
   let chatHistory     = [] // Stores conversation history for chat feature
   let lastSummary     = '' // Stores the last generated summary for chat context
   let closeManualCopyDialog = null
+  const scrollPositions     = new WeakMap() // Last known scroll offset per scrolling container
+  let scrollFrame           = null
+  let pendingScrollTarget   = null
 
   // --- Main Functions ---
 
@@ -174,6 +181,7 @@
       addSummarizeButton()
       showElement(BUTTON_ID)
       setupFocusListeners()
+      setupScrollListener()
     }
   }
 
@@ -848,6 +856,7 @@
     if (el) {
       const displayValue = (id === BUTTON_ID) ? 'flex' : 'block'
       el.style.setProperty('display', displayValue, 'important')
+      if (id === BUTTON_ID) el.classList.remove(SCROLL_HIDDEN_CLASS)
     }
   }
 
@@ -1585,6 +1594,64 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
   }
 
   /**
+   * Returns the current scroll offset of a scroll event target.
+   * @param {Document|Element} target
+   * @returns {number}
+   */
+  function getScrollOffset(target) {
+    return target === document
+      ? (window.scrollY || document.documentElement.scrollTop || 0)
+      : (target.scrollTop || 0)
+  }
+
+  /**
+   * Hides the button when scrolling down and restores it when scrolling up.
+   * @param {Document|Element} target
+   */
+  function updateButtonOnScroll(target) {
+    const button = document.getElementById(BUTTON_ID)
+    if (!button || document.getElementById(OVERLAY_ID)) return
+
+    const current  = getScrollOffset(target)
+    const previous = scrollPositions.get(target) ?? current
+    scrollPositions.set(target, current)
+
+    if (current <= SCROLL_HIDE_MIN_TOP) {
+      button.classList.remove(SCROLL_HIDDEN_CLASS)
+      return
+    }
+
+    const delta = current - previous
+    if (Math.abs(delta) < SCROLL_HIDE_DELTA) return
+
+    if (delta > 0) {
+      button.classList.add(SCROLL_HIDDEN_CLASS)
+      hideElement(DROPDOWN_ID)
+    }
+    else {
+      button.classList.remove(SCROLL_HIDDEN_CLASS)
+    }
+  }
+
+  /**
+   * Sets up the scroll listener that toggles the button visibility.
+   */
+  function setupScrollListener() {
+    // Capture phase also catches scrolling containers other than the document.
+    document.addEventListener('scroll', (event) => {
+      const target = (event.target === document || event.target === window) ? document : event.target
+      if (target !== document && !(target instanceof Element)) return
+
+      pendingScrollTarget = target
+      if (scrollFrame) return
+      scrollFrame = requestAnimationFrame(() => {
+        scrollFrame = null
+        updateButtonOnScroll(pendingScrollTarget)
+      })
+    }, { passive: true, capture: true })
+  }
+
+  /**
    * Injects CSS styles.
    */
   function injectStyles() {
@@ -1594,7 +1661,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         all: initial !important;
         position: fixed !important;
         bottom: 20px !important;
-        right: 20px !important;
+        left: 20px !important;
         width: 50px !important;
         height: 50px !important;
         background: linear-gradient(145deg, #3a7bd5, #00d2ff) !important;
@@ -1608,7 +1675,7 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        transition: transform 0.2s ease-out, box-shadow 0.2s ease-out !important;
+        transition: transform 0.25s ease-out, box-shadow 0.2s ease-out, opacity 0.25s ease-out !important;
         line-height: 1 !important;
         user-select: none !important;
         -webkit-tap-highlight-color: transparent !important;
@@ -1618,13 +1685,19 @@ Respond helpfully to questions about this article. Use ${lang} language. Use HTM
         transform: scale(1.1) !important;
         box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3) !important;
       }
+      /* Slides the button away while scrolling down (must stay after :hover) */
+      #${BUTTON_ID}.${SCROLL_HIDDEN_CLASS} {
+        transform: translateY(120px) !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
 
       /* --- Dropdown Menu --- */
       #${DROPDOWN_ID} {
         all: initial !important;
         position: fixed !important;
         bottom: 80px !important;
-        right: 20px !important;
+        left: 20px !important;
         background: #ffffff !important;
         border: 1px solid #e0e0e0 !important;
         border-radius: 12px !important;

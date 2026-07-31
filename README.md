@@ -63,7 +63,8 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
 *   **Instalar:** [Greasy Fork](https://greasyfork.org/en/scripts/509192-summarize-with-ai)
 
 * **Uso:**
-    * **Clique simples** no botão 'S' no canto inferior direito: Inicia a sumarização com o último modelo usado.
+    * **Clique simples** no botão 'S' no canto inferior esquerdo: Inicia a sumarização com o último modelo usado. O
+      botão some ao rolar a página para baixo e reaparece ao rolar para cima.
     * **Long Press** (segurar por 0.5s) no botão 'S': Abre o menu para selecionar um modelo diferente.
     * **Atalho `Alt+S`**: Inicia a sumarização com o último modelo usado.
     * **Botão 💬 (Chat)**: Após o resumo, clique para abrir a área de chat e fazer perguntas sobre o artigo.
