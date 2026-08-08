@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2026.08.08.2034
+// @version      2026.08.08.2140
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -13,6 +13,7 @@
 // @connect      api.openai.com
 // @connect      generativelanguage.googleapis.com
 // @require      https://cdn.jsdelivr.net/npm/defuddle@0.19.2/dist/index.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/readability/0.6.0/Readability.min.js
 // @downloadURL  https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI.user.js
 // @updateURL    https://update.greasyfork.org/scripts/509192/Summarize%20with%20AI.meta.js
 // ==/UserScript==
@@ -232,14 +233,29 @@ ${article.content}
   }
 
   /**
-   * Extracts plain text from cleaned article HTML.
+   * Removes non-text media and extracts visible text from article HTML.
    * @param {string} contentHTML
-   * @returns {string}
+   * @returns {{content: string, textContent: string}}
    */
-  function getTextFromHTML(contentHTML) {
+  function prepareArticleContent(contentHTML) {
     const template     = document.createElement('template')
     template.innerHTML = contentHTML
-    return (template.content.textContent || '').replace(/\s+/g, ' ').trim()
+    template.content.querySelectorAll('img, picture, source, svg, iframe, video, audio').forEach(element => element.remove())
+    return {
+      content    : template.innerHTML.trim(),
+      textContent: (template.content.textContent || '').replace(/\s+/g, ' ').trim(),
+    }
+  }
+
+  /**
+   * Clones the page without elements created by this userscript.
+   * @returns {Document}
+   */
+  function cloneDocumentForParsing() {
+    const docClone        = document.cloneNode(true)
+    const userscriptUiIds = [ BUTTON_ID, DROPDOWN_ID, OVERLAY_ID, NOTIFICATION_ID, MANUAL_COPY_ID ]
+    userscriptUiIds.forEach(id => docClone.getElementById(id)?.remove())
+    return docClone
   }
 
   /**
@@ -248,20 +264,44 @@ ${article.content}
    */
   function getArticleData() {
     try {
-      const docClone        = document.cloneNode(true)
-      const userscriptUiIds = [ BUTTON_ID, DROPDOWN_ID, OVERLAY_ID, NOTIFICATION_ID, MANUAL_COPY_ID ]
-      userscriptUiIds.forEach(id => docClone.getElementById(id)?.remove())
+      const DefuddleParser = globalThis.Defuddle
+      let article          = null
 
-      // eslint-disable-next-line no-undef
-      const article = new Defuddle(docClone, {
-        url           : window.location.href,
-        language      : navigator.language || document.documentElement.lang,
-        useAsync      : false,
-        includeReplies: false,
-        removeImages  : true,
-      }).parse()
-      const content     = article?.content?.trim() || ''
-      const textContent = getTextFromHTML(content)
+      if (typeof DefuddleParser === 'function') {
+        try {
+          article = new DefuddleParser(cloneDocumentForParsing(), {
+            url           : window.location.href,
+            language      : navigator.language || document.documentElement.lang,
+            useAsync      : false,
+            includeReplies: false,
+            removeImages  : true,
+          }).parse()
+        }
+        catch (error) {
+          console.warn('Summarize with AI: Defuddle failed; trying Readability fallback.', error)
+        }
+      }
+      else {
+        console.warn('Summarize with AI: Defuddle global unavailable; using Readability fallback.')
+      }
+
+      if (!article?.content) {
+        const ReadabilityParser = globalThis.Readability
+        if (typeof ReadabilityParser !== 'function') {
+          throw new Error('No article parser is available.')
+        }
+        const readable = new ReadabilityParser(cloneDocumentForParsing()).parse()
+        article = readable && {
+          ...readable,
+          author     : readable.byline,
+          published  : readable.publishedTime,
+          site       : readable.siteName,
+          language   : readable.lang,
+          description: readable.excerpt,
+        }
+      }
+
+      const { content, textContent } = prepareArticleContent(article?.content || '')
 
       if (!content || textContent.length < MIN_ARTICLE_CHARACTERS) {
         console.log('Summarize with AI: Page does not contain enough extractable content.')
@@ -276,7 +316,7 @@ ${article.content}
         site       : article.site?.trim() || '',
         language   : article.language?.trim() || document.documentElement.lang || navigator.language || '',
         description: article.description?.trim() || '',
-        wordCount  : article.wordCount || 0,
+        wordCount  : article.wordCount || textContent.split(/\s+/).length,
         url        : window.location.href,
       }
     }

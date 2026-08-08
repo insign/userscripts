@@ -39,6 +39,8 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
     * **Conteúdo Estruturado:** Envia HTML semântico limpo e metadados selecionados para melhorar a compreensão do modelo.
     * **Suporte a SPAs:** A página é extraída no momento da sumarização, evitando conteúdo antigo após navegação interna.
     * **Isolamento de Prompt:** Instruções do modelo ficam separadas do conteúdo não confiável extraído da página.
+    * **Compatibilidade AMD:** Readability atua como fallback em sites RequireJS que impedem o bundle UMD do Defuddle de
+      expor seu global.
 
 * **Novidades (v2026.07.28):**
     * **Modelos Gemini Nativos:** Suporte a Gemini 3.6 Flash (`gemini-3.6-flash`) e Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`).
@@ -78,8 +80,8 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
     * **Resetar API Key**: No menu de modelos, clique em "Reset Key" ao lado do serviço (OpenAI/Gemini).
     * **Erro na Sumarização**: Um botão "Try Again" aparecerá no overlay em caso de erro.
 
-*   **Dependências:** Usa Defuddle 0.19.2 via jsDelivr e requer chaves de API válidas para OpenAI e/ou Google Gemini
-    (AI Studio).
+*   **Dependências:** Usa Defuddle 0.19.2 via jsDelivr, com Readability 0.6 como fallback de compatibilidade, e requer
+    chaves de API válidas para OpenAI e/ou Google Gemini (AI Studio).
 
 ### Better LMArena (lmsys) Chat
 > Esse script vai ser desativado em breve com o advento da nova versão do frontend.
