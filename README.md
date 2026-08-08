@@ -28,10 +28,17 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
 
 ### Summarize with AI (OpenAI/Gemini)
 
-* **Descrição:** Adiciona um botão discreto ('S') em páginas detectadas como artigos ou notícias. Ao clicar, utiliza o
-  último modelo de IA selecionado (OpenAI ou Gemini) para gerar um resumo conciso do conteúdo. Pede a chave da API no
-  primeiro uso de cada serviço ou se ela for apagada. O resumo é exibido em um overlay na língua do navegador. Permite
-  adicionar modelos customizados.
+* **Descrição:** Adiciona um botão discreto ('S') em páginas com conteúdo textual suficiente. Ao clicar, extrai a versão
+  atual da página e utiliza o último modelo de IA selecionado (OpenAI ou Gemini) para gerar um resumo conciso. Pede a
+  chave da API no primeiro uso de cada serviço ou se ela for apagada. O resumo é exibido em um overlay na língua do
+  navegador. Permite adicionar modelos customizados.
+
+* **Novidades (v2026.08.08):**
+    * **Extração com Defuddle:** Substitui Readability por uma extração mais moderna, com melhor suporte a código, listas,
+      notas, legendas e metadados de artigos.
+    * **Conteúdo Estruturado:** Envia HTML semântico limpo e metadados selecionados para melhorar a compreensão do modelo.
+    * **Suporte a SPAs:** A página é extraída no momento da sumarização, evitando conteúdo antigo após navegação interna.
+    * **Isolamento de Prompt:** Instruções do modelo ficam separadas do conteúdo não confiável extraído da página.
 
 * **Novidades (v2026.07.28):**
     * **Modelos Gemini Nativos:** Suporte a Gemini 3.6 Flash (`gemini-3.6-flash`) e Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`).
@@ -71,7 +78,8 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
     * **Resetar API Key**: No menu de modelos, clique em "Reset Key" ao lado do serviço (OpenAI/Gemini).
     * **Erro na Sumarização**: Um botão "Try Again" aparecerá no overlay em caso de erro.
 
-*   **Dependências:** Requer chaves de API válidas para OpenAI e/ou Google Gemini (AI Studio).
+*   **Dependências:** Usa Defuddle 0.19.2 via jsDelivr e requer chaves de API válidas para OpenAI e/ou Google Gemini
+    (AI Studio).
 
 ### Better LMArena (lmsys) Chat
 > Esse script vai ser desativado em breve com o advento da nova versão do frontend.
