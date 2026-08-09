@@ -41,6 +41,8 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
     * **Isolamento de Prompt:** Instruções do modelo ficam separadas do conteúdo não confiável extraído da página.
     * **Compatibilidade AMD:** Readability atua como fallback em sites RequireJS que impedem o bundle UMD do Defuddle de
       expor seu global.
+    * **Idioma Consistente:** O idioma de saída vem exclusivamente da preferência do navegador e é reforçado nos prompts,
+      independentemente do idioma original do artigo.
 
 * **Novidades (v2026.07.28):**
     * **Modelos Gemini Nativos:** Suporte a Gemini 3.6 Flash (`gemini-3.6-flash`) e Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`).
