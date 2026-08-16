@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2026.08.09.0211
+// @version      2026.08.16.0027
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -48,8 +48,8 @@
   const CUSTOM_MODELS_KEY = 'custom_ai_models'
 
   const MODEL_ID_MIGRATIONS = {
-    'gemini-flash-lite-latest': 'gemini-3.5-flash-lite',
-    'gemini-flash-latest'     : 'gemini-3.6-flash',
+    'gemini-3.5-flash-lite': 'gemini-flash-lite-latest',
+    'gemini-3.6-flash'     : 'gemini-flash-latest',
   }
 
   // Token Limits
@@ -84,13 +84,13 @@
       baseUrl      : 'https://generativelanguage.googleapis.com/v1beta/models/',
       models       : [
         {
-          id    : 'gemini-3.5-flash-lite',
-          name  : 'Gemini 3.5 Flash-Lite (faster)',
+          id    : 'gemini-flash-lite-latest',
+          name  : 'Gemini Flash-Lite (faster)',
           params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingLevel: 'minimal' } }
         },
         {
-          id    : 'gemini-3.6-flash',
-          name  : 'Gemini 3.6 Flash',
+          id    : 'gemini-flash-latest',
+          name  : 'Gemini Flash',
           params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingLevel: 'low' } }
         },
         {
@@ -183,7 +183,7 @@ ${article.content}
   const getPreferredOutputLanguage = () => navigator.languages?.[0] || navigator.language || 'en-US'
 
   // --- State Variables ---
-  let activeModel     = 'gemini-3.5-flash-lite'
+  let activeModel     = 'gemini-flash-lite-latest'
   let articleData     = null
   let customModels    = [] // Stores {id, service, supportsThinking?: boolean}
   let longPressTimer  = null
@@ -1611,7 +1611,7 @@ Respond helpfully to questions about this article. Your entire response MUST be 
       await GM.setValue(CUSTOM_MODELS_KEY, JSON.stringify(customModels))
 
       if (activeModel === modelId) {
-        activeModel = 'gemini-3.5-flash-lite'
+        activeModel = 'gemini-flash-lite-latest'
         await GM.setValue('last_used_model', activeModel)
       }
 
