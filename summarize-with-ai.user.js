@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2026.08.16.0027
+// @version      2026.08.16.0112
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -50,6 +50,11 @@
   const MODEL_ID_MIGRATIONS = {
     'gemini-3.5-flash-lite': 'gemini-flash-lite-latest',
     'gemini-3.6-flash'     : 'gemini-flash-latest',
+    'o4-mini'              : 'gpt-5.6-terra',
+    'o3-mini'              : 'gpt-5.6-sol',
+    'gpt-4.1'              : 'gpt-5.6-sol',
+    'gpt-4.1-mini'         : 'gpt-5.6-terra',
+    'gpt-4.1-nano'         : 'gpt-5.6-luna',
   }
 
   // Token Limits
@@ -63,7 +68,7 @@
   const SCROLL_HIDE_MIN_TOP = 60  // Keep the button visible near the top of the page
   // Request timeouts (ms)
   const DEFAULT_TIMEOUT     = 60000   // 60 seconds for non-thinking models
-  const THINKING_TIMEOUT    = 300000  // 300 seconds (5 min) for thinking models (Pro, o3, o4)
+  const THINKING_TIMEOUT    = 300000  // 300 seconds (5 min) for thinking models (Pro, o3, o4, GPT-5.6)
 
   // Default AI model configurations
   const MODEL_GROUPS = {
@@ -71,11 +76,9 @@
       name         : 'OpenAI',
       baseUrl      : 'https://api.openai.com/v1/chat/completions',
       models       : [
-        { id: 'o4-mini', name: 'o4 mini (better)', params: { max_completion_tokens: HIGH_MAX_TOKENS, reasoning_effort: 'low' } },
-        { id: 'o3-mini', name: 'o3 mini', params: { max_completion_tokens: HIGH_MAX_TOKENS, reasoning_effort: 'low' } },
-        { id: 'gpt-4.1', name: 'GPT-4.1' },
-        { id: 'gpt-4.1-mini', name: 'GPT-4.1 mini' },
-        { id: 'gpt-4.1-nano', name: 'GPT-4.1 nano (faster)' },
+        { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol (better)', params: { max_completion_tokens: HIGH_MAX_TOKENS, reasoning_effort: 'low' } },
+        { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', params: { max_completion_tokens: HIGH_MAX_TOKENS, reasoning_effort: 'medium' } },
+        { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna (faster)', params: { max_completion_tokens: HIGH_MAX_TOKENS, reasoning_effort: 'xhigh' } },
       ],
       defaultParams: { max_completion_tokens: DEFAULT_MAX_TOKENS }
     },

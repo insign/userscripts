@@ -57,7 +57,7 @@ Este repositório contém uma coleção de userscripts úteis para melhorar a ex
       line-height de 1.75 e espaçamentos melhorados.
     * **Dark Mode Aprimorado:** Detecta automaticamente o modo escuro do sistema/navegador e adapta todas as cores com
       `!important` para garantir visualização correta em qualquer site.
-    * **Timeout Inteligente:** Modelos com "thinking" (Pro, o3, o4) agora têm timeout de 3 minutos para evitar erros de
+    * **Timeout Inteligente:** Modelos com "thinking" (Pro, o3, o4, GPT-5.6) agora têm timeout de 3 minutos para evitar erros de
       timeout durante processamentos mais longos.
     * **Prompt Melhorado:**
         * O primeiro parágrafo agora responde diretamente a pergunta implícita no título do artigo (anti-clickbait)
