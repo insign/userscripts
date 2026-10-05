@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Summarize with AI
 // @namespace    https://github.com/insign/userscripts
-// @version      2026.08.16.0112
+// @version      2026.10.05.1157
 // @description  Single-button AI summarization (OpenAI/Gemini) with chat follow-up feature. Uses Alt+S shortcut. Long press 'S' (or tap-and-hold on mobile) to select model. Supports custom models. Dark mode auto-detection. Click chat icon to continue conversation about the article.
 // @author       Hélio <open@helio.me>
 // @license      WTFPL
@@ -88,17 +88,17 @@
       models       : [
         {
           id    : 'gemini-flash-lite-latest',
-          name  : 'Gemini Flash-Lite (faster)',
+          name  : 'Gemini Flash-Lite Latest (faster)',
           params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingLevel: 'minimal' } }
         },
         {
           id    : 'gemini-flash-latest',
-          name  : 'Gemini Flash',
+          name  : 'Gemini Flash Latest',
           params: { maxOutputTokens: HIGH_MAX_TOKENS, thinkingConfig: { thinkingLevel: 'low' } }
         },
         {
           id    : 'gemini-pro-latest',
-          name  : 'Gemini Pro (better)',
+          name  : 'Gemini Pro Latest (better)',
           params: { maxOutputTokens: HIGH_MAX_TOKENS } // No thinkingConfig, Gemini API default (thinking enabled) will be used
         },
       ],
